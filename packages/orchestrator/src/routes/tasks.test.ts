@@ -144,6 +144,33 @@ describe('POST / — validateCreateTask', () => {
     const [insertArg] = mockInsertTask.mock.calls[0]! as unknown as [Record<string, unknown>]
     expect(insertArg.hacked).toBeUndefined()
   })
+
+  test('returns 400 for repo with .. path traversal', async () => {
+    const res = await request('/', {
+      method: 'POST',
+      body: JSON.stringify({ repo: '../evil', description: 'task' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('returns 400 for repo missing slash', async () => {
+    const res = await request('/', {
+      method: 'POST',
+      body: JSON.stringify({ repo: 'noslash', description: 'task' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('accepts repo with dots and hyphens', async () => {
+    const res = await request('/', {
+      method: 'POST',
+      body: JSON.stringify({ repo: 'owner-name/repo.git', description: 'task' }),
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(201)
+  })
 })
 
 describe('API key auth', () => {

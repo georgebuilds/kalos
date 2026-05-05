@@ -2,9 +2,19 @@ import { describe, test, expect, mock, beforeEach } from 'bun:test'
 import { createHmac } from 'node:crypto'
 
 const mockReviewPullRequest = mock(async (_payload: unknown) => {})
+const mockQueueCiFixIfEligible = mock(async (_opts: unknown) => {})
 
 mock.module('../github/review.js', () => ({
   reviewPullRequest: mockReviewPullRequest,
+}))
+
+mock.module('../github/ci-fix.js', () => ({
+  queueCiFixIfEligible: mockQueueCiFixIfEligible,
+}))
+
+mock.module('../db/index.js', () => ({
+  insertPrReview: () => {},
+  tryRecordWebhookDelivery: () => true,
 }))
 
 const { webhooksRouter } = await import('./webhooks.js')
@@ -39,6 +49,7 @@ const validPrBody = JSON.stringify({
 
 beforeEach(() => {
   mockReviewPullRequest.mockClear()
+  mockQueueCiFixIfEligible.mockClear()
   process.env.GITHUB_WEBHOOK_SECRET = SECRET
 })
 
@@ -120,5 +131,94 @@ describe('POST /github', () => {
     expect(res.status).toBe(200)
     const json = await res.json()
     expect(json.ok).toBe(true)
+  })
+
+  test('returns 400 for pull_request event missing head.sha', async () => {
+    const body = JSON.stringify({
+      action: 'opened',
+      number: 1,
+      pull_request: {
+        title: 'feat',
+        body: null,
+        head: { ref: 'my-branch' }, // missing sha
+        base: { ref: 'main' },
+        diff_url: 'https://github.com/owner/repo/pull/1.diff',
+        html_url: 'https://github.com/owner/repo/pull/1',
+      },
+      repository: { full_name: 'owner/repo' },
+    })
+    const res = await makeRequest(body, { event: 'pull_request' })
+    expect(res.status).toBe(400)
+  })
+})
+
+const validCheckRunBody = JSON.stringify({
+  action: 'completed',
+  check_run: {
+    id: 1,
+    name: 'CI / test',
+    conclusion: 'failure',
+    html_url: 'https://github.com/owner/repo/actions/runs/1',
+    output: { title: null, summary: null, text: null },
+    check_suite: { head_branch: 'kalos/task-ABC123' },
+  },
+  repository: { full_name: 'owner/repo' },
+})
+
+describe('check_run event', () => {
+  test('ignores check_run for non-kalos branch', async () => {
+    const body = JSON.stringify({
+      ...JSON.parse(validCheckRunBody),
+      check_run: {
+        ...JSON.parse(validCheckRunBody).check_run,
+        check_suite: { head_branch: 'feature/my-branch' },
+      },
+    })
+    const res = await makeRequest(body, { event: 'check_run' })
+    expect(res.status).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(mockQueueCiFixIfEligible).not.toHaveBeenCalled()
+  })
+
+  test('ignores check_run with non-completed action', async () => {
+    const body = JSON.stringify({ ...JSON.parse(validCheckRunBody), action: 'created' })
+    const res = await makeRequest(body, { event: 'check_run' })
+    expect(res.status).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(mockQueueCiFixIfEligible).not.toHaveBeenCalled()
+  })
+
+  test('ignores check_run with passing conclusion', async () => {
+    const parsed = JSON.parse(validCheckRunBody)
+    const body = JSON.stringify({
+      ...parsed,
+      check_run: { ...parsed.check_run, conclusion: 'success' },
+    })
+    const res = await makeRequest(body, { event: 'check_run' })
+    expect(res.status).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(mockQueueCiFixIfEligible).not.toHaveBeenCalled()
+  })
+
+  test('calls queueCiFixIfEligible for failing kalos/task-* branch', async () => {
+    const res = await makeRequest(validCheckRunBody, { event: 'check_run' })
+    expect(res.status).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(mockQueueCiFixIfEligible).toHaveBeenCalledTimes(1)
+    const [opts] = mockQueueCiFixIfEligible.mock.calls[0]! as [{ branch: string; repo: string }]
+    expect(opts.branch).toBe('kalos/task-ABC123')
+    expect(opts.repo).toBe('owner/repo')
+  })
+
+  test('calls queueCiFixIfEligible for timed_out conclusion', async () => {
+    const parsed = JSON.parse(validCheckRunBody)
+    const body = JSON.stringify({
+      ...parsed,
+      check_run: { ...parsed.check_run, conclusion: 'timed_out' },
+    })
+    const res = await makeRequest(body, { event: 'check_run' })
+    expect(res.status).toBe(200)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(mockQueueCiFixIfEligible).toHaveBeenCalledTimes(1)
   })
 })

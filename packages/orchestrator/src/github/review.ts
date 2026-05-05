@@ -32,7 +32,7 @@ type ReviewInput = {
   headBranch: string
 }
 
-async function fetchDiff(diffUrl: string, token: string): Promise<string> {
+async function fetchDiff(diffUrl: string, token: string): Promise<string | null> {
   const res = await fetch(diffUrl, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -45,10 +45,10 @@ async function fetchDiff(diffUrl: string, token: string): Promise<string> {
   const contentLength = Number(res.headers.get('Content-Length') ?? NaN)
   if (!isNaN(contentLength) && contentLength > MAX_DIFF_BYTES) {
     await res.body?.cancel()
-    return '[diff too large to fetch — skipping review]'
+    return null
   }
 
-  if (!res.body) return await res.text()
+  if (!res.body) return (await res.text()) || null
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -136,7 +136,7 @@ export async function reviewPullRequest(payload: PullRequestPayload): Promise<vo
   const token = await getCachedInstallationToken(config)
 
   const diff = await fetchDiff(pr.diff_url, token)
-  if (!diff || diff.length === 0) return
+  if (!diff) return
 
   const review = await generateReview({
     title: pr.title,

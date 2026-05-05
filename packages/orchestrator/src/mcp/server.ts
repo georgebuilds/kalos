@@ -16,7 +16,7 @@ mcpServer.registerTool(
   {
     description: 'Create a new Kalos agent task for a GitHub repository.',
     inputSchema: {
-      repo: z.string().regex(REPO_RE, 'repo must be in owner/repo format'),
+      repo: z.string().regex(REPO_RE, 'repo must be in owner/repo format').refine((r) => !r.includes('..'), { message: 'repo must not contain ..' }),
       description: z.string().min(1, 'description is required'),
       baseBranch: z.string().optional(),
     },

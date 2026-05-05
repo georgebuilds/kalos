@@ -11,6 +11,7 @@ import {
 } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import { commitAll, hasChanges } from '../git.js'
+import { commandArgs } from '../runtime.js'
 
 const MAX_OUTPUT_BYTES = 256 * 1024
 
@@ -126,17 +127,21 @@ export const list_directory = tool({
   description: 'List files and directories at a path in the workspace',
   parameters: z.object({ path: z.string() }),
   execute: async ({ path }) => {
-    const abs = resolveRealPath(path)
-    const entries = readdirSync(abs)
-    return entries
-      .map((e) => {
-        try {
-          return statSync(join(abs, e)).isDirectory() ? `${e}/` : e
-        } catch {
-          return e
-        }
-      })
-      .join('\n')
+    try {
+      const abs = resolveRealPath(path)
+      const entries = readdirSync(abs)
+      return entries
+        .map((e) => {
+          try {
+            return statSync(join(abs, e)).isDirectory() ? `${e}/` : e
+          } catch {
+            return e
+          }
+        })
+        .join('\n')
+    } catch (err) {
+      return `error: ${(err as Error).message}`
+    }
   },
 })
 
@@ -146,7 +151,7 @@ export const run_command = tool({
   execute: async ({ command }) => {
     const safeEnv = { ...process.env }
     for (const key of SECRET_ENV_VARS) delete safeEnv[key]
-    const result = Bun.spawnSync(['sh', '-c', command], {
+    const result = Bun.spawnSync(commandArgs(command), {
       cwd: workspace(),
       stdout: 'pipe',
       stderr: 'pipe',

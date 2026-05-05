@@ -12,7 +12,7 @@ function validateCreateTask(body: unknown): {
   if (typeof body !== 'object' || body === null) throw new Error('Invalid body')
   const b = body as Record<string, unknown>
   if (typeof b.repo !== 'string' || !b.repo) throw new Error('repo is required')
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(b.repo))
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(b.repo) || b.repo.includes('..'))
     throw new Error('repo must be in owner/repo format')
   if (typeof b.description !== 'string' || !b.description)
     throw new Error('description is required')
@@ -128,7 +128,12 @@ tasksRouter.get('/:id/logs', async (c) => {
 
         interval = setInterval(() => {
           flush()
-          const current = getTask(task.id)!
+          const current = getTask(task.id)
+          if (!current) {
+            controller.close()
+            clearInterval(interval)
+            return
+          }
           if (current.status === 'completed' || current.status === 'failed') {
             flush()
             controller.enqueue(new TextEncoder().encode('event: done\ndata: {}\n\n'))

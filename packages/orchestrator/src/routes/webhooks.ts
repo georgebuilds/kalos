@@ -45,19 +45,29 @@ type PullRequestPayload = Parameters<typeof reviewPullRequest>[0]
 function isPullRequestPayload(payload: Record<string, unknown>): payload is PullRequestPayload {
   const pr = payload.pull_request
   const repo = payload.repository
-  return (
-    typeof payload.action === 'string' &&
-    typeof payload.number === 'number' &&
-    pr !== null &&
-    typeof pr === 'object' &&
-    typeof (pr as Record<string, unknown>).title === 'string' &&
-    typeof (pr as Record<string, unknown>).diff_url === 'string' &&
-    typeof (pr as Record<string, unknown>).html_url === 'string' &&
-    repo !== null &&
-    typeof repo === 'object' &&
-    typeof (repo as Record<string, unknown>).full_name === 'string' &&
-    ((repo as Record<string, unknown>).full_name as string).includes('/')
-  )
+  if (
+    typeof payload.action !== 'string' ||
+    typeof payload.number !== 'number' ||
+    pr === null ||
+    typeof pr !== 'object'
+  ) return false
+  const prObj = pr as Record<string, unknown>
+  if (
+    typeof prObj.title !== 'string' ||
+    typeof prObj.diff_url !== 'string' ||
+    typeof prObj.html_url !== 'string'
+  ) return false
+  const head = prObj.head
+  if (head === null || typeof head !== 'object') return false
+  const headObj = head as Record<string, unknown>
+  if (typeof headObj.sha !== 'string' || typeof headObj.ref !== 'string') return false
+  if (
+    repo === null ||
+    typeof repo !== 'object' ||
+    typeof (repo as Record<string, unknown>).full_name !== 'string' ||
+    !((repo as Record<string, unknown>).full_name as string).includes('/')
+  ) return false
+  return true
 }
 
 export const webhooksRouter = new Hono()

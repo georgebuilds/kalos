@@ -8,7 +8,7 @@ mkdirSync(TEST_WORKSPACE_RAW, { recursive: true })
 const TEST_WORKSPACE = realpathSync(TEST_WORKSPACE_RAW)
 process.env.AGENT_WORKSPACE = TEST_WORKSPACE
 
-const { read_file, write_file, list_directory, run_command, complete } = await import('./index.js')
+const { read_file, write_file, delete_file, list_directory, run_command, complete } = await import('./index.js')
 
 // ToolExecutionOptions stub — the execute functions don't use the options arg
 const opts = { toolCallId: 'test', messages: [] as any[] }
@@ -116,6 +116,48 @@ describe('run_command', () => {
   test('executes command in the workspace directory', async () => {
     const result = await run_command.execute!({ command: 'pwd' }, opts)
     expect(result.trim()).toBe(TEST_WORKSPACE)
+  })
+})
+
+describe('write_file size limit', () => {
+  test('returns error when content exceeds 256 KB', async () => {
+    const content = 'a'.repeat(256 * 1024 + 1)
+    const result = await write_file.execute!({ path: 'too-big.txt', content }, opts)
+    expect(result).toContain('error')
+    expect(result).toContain('256 KB')
+  })
+})
+
+describe('delete_file', () => {
+  test('deletes an existing file and confirms it is gone', async () => {
+    await write_file.execute!({ path: 'to-delete.txt', content: 'bye' }, opts)
+    const result = await delete_file.execute!({ path: 'to-delete.txt' }, opts)
+    expect(result).toBe('deleted: to-delete.txt')
+    const check = await read_file.execute!({ path: 'to-delete.txt' }, opts)
+    expect(check).toBe('file not found')
+  })
+
+  test('returns file not found for a nonexistent file', async () => {
+    const result = await delete_file.execute!({ path: 'does-not-exist.txt' }, opts)
+    expect(result).toBe('file not found')
+  })
+
+  test('returns error when path is a directory', async () => {
+    const result = await delete_file.execute!({ path: 'nested' }, opts)
+    expect(result).toContain('error')
+    expect(result).toContain('directory')
+  })
+
+  test('rejects path containing ..', async () => {
+    const result = await delete_file.execute!({ path: '../evil.txt' }, opts)
+    expect(result).toContain('path not allowed')
+  })
+})
+
+describe('list_directory error handling', () => {
+  test('returns error for a nonexistent directory', async () => {
+    const result = await list_directory.execute!({ path: 'no-such-dir' }, opts)
+    expect(result).toContain('error')
   })
 })
 
