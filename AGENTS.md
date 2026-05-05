@@ -77,7 +77,14 @@ Webhook events to subscribe:
 
 Kalos exposes its task management as an MCP server via Streamable HTTP (spec `2025-03-26`).
 
-**Endpoint**: `POST /mcp` (also `GET /mcp` for SSE, `DELETE /mcp` for session teardown)
+**Endpoints**:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/mcp` | Send JSON-RPC requests (tool calls, initialization) |
+| `GET` | `/mcp` | Open an SSE stream to receive server-initiated messages |
+| `DELETE` | `/mcp` | Tear down a session (returns 200; stateless server ignores session ID) |
+
 **Transport**: Stateless Streamable HTTP — each request creates a fresh transport; no `Mcp-Session-Id` required.
 **Auth**: Same `X-Api-Key` header as the REST API. Open when `KALOS_API_KEY` is unset.
 
