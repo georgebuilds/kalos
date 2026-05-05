@@ -71,6 +71,8 @@ After saving: generate a **private key** (downloads as a `.pem` file), then **in
 
 **Requirements:** persistent disk for the SQLite database (`DATABASE_URL`). Most PaaS platforms offer this as a volume or persistent storage option.
 
+**Recommended:** install [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`). The agent reads the target repo's `.tool-versions` / `.nvmrc` / `go.mod` / `composer.json` and uses mise to provide the right node/bun/go/php version when running tests. Without mise the agent falls back to whatever interpreters are already on PATH. The runtime cache lives at `KALOS_TOOLCHAIN_DIR` (default `~/.local/share/kalos/mise`) and is shared across tasks.
+
 #### 1. Clone the repo
 
 ```bash
@@ -134,6 +136,8 @@ You should get `{"ok":true}`.
 **Requires:** a Linux VPS with Docker daemon, and the `kalos-agent` image built or pulled.
 
 Pre-built images are published to GHCR at `ghcr.io/georgebuilds/kalos-orchestrator:latest` and `ghcr.io/georgebuilds/kalos-agent:latest`.
+
+The agent image ships with [mise](https://mise.jdx.dev) and pre-seeded copies of node 20/22, bun 1.2, and go 1.23. A named Docker volume (`KALOS_TOOLCHAIN_VOLUME`, default `kalos-mise-cache`) persists the cache across tasks so first-task latency for any new (language, version) pair is paid once. PHP is **not** pre-seeded — its plugin compiles from source — but the build deps are baked in, so the first task that wants `php@8.x` will install it (slow), and every task after will reuse the volume.
 
 **Minimum spec:** 1 vCPU / 1 GB RAM / 25 GB disk (a $7/mo Hetzner or DigitalOcean box works fine).
 
@@ -289,8 +293,11 @@ Handles `pull_request` events (triggers automatic PR review) and `check_run` eve
 | `GITHUB_APP_PRIVATE_KEY` | — | Inline PEM string (alternative to path) |
 | `GITHUB_INSTALLATION_ID` | — | GitHub App installation ID |
 | `GITHUB_WEBHOOK_SECRET` | — | HMAC secret for validating GitHub webhook payloads |
+| `KALOS_WORKSPACE_ROOT` | `~/.local/share/kalos/workspaces` | Per-task clone scratch (`EXECUTOR=process` only) |
+| `KALOS_TOOLCHAIN_DIR` | `~/.local/share/kalos/mise` | Shared mise data dir for cached runtimes (`EXECUTOR=process` only) |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker daemon socket (`EXECUTOR=docker` only) |
 | `AGENT_IMAGE` | `kalos-agent:latest` | Docker image for agent containers (`EXECUTOR=docker` only) |
+| `KALOS_TOOLCHAIN_VOLUME` | `kalos-mise-cache` | Docker named volume backing the in-container mise cache (`EXECUTOR=docker` only) |
 
 ---
 
@@ -305,7 +312,7 @@ For team or org deployments, increase `MAX_CONCURRENT_TASKS` to match your resou
 ## Security
 
 - **`EXECUTOR=process`:** the agent runs as the orchestrator's OS user with access to the host filesystem. Set `KALOS_API_KEY` and only accept tasks from repos you trust. Not suitable for multi-tenant use.
-- **`EXECUTOR=docker`:** containers run with `--cap-drop ALL`, a 512 MB memory limit, and no host volume mounts. Better isolation, but prompt injection could still exfiltrate data over the network.
+- **`EXECUTOR=docker`:** containers run with `--cap-drop ALL` and a 512 MB memory limit. The only mount is the named toolchain volume (`kalos-mise-cache`) at `/cache/mise` — agents have no access to the host filesystem. Better isolation than process mode, but prompt injection could still exfiltrate data over the network.
 - API key auth via `KALOS_API_KEY` (strongly recommended in both cases)
 - Webhook payloads validated with HMAC-SHA256 against `GITHUB_WEBHOOK_SECRET`
 - Rate limiting on task creation: 20 requests per IP per minute

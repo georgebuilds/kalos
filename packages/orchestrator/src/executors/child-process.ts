@@ -1,3 +1,5 @@
+import { mkdirSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { ulid } from 'ulid'
 import { getCachedInstallationToken, getGithubConfig } from '../github/auth.js'
 import { config } from '../config.js'
@@ -26,6 +28,12 @@ export class ChildProcessExecutor implements Executor {
     const token = await getCachedInstallationToken(githubConfig)
     const isCiFix = task.ciFixAttempts > 0
 
+    // Per-task workspace lives under config.workspaceRoot. The shared mise
+    // data dir lets every task reuse downloaded language runtimes.
+    const workspace = join(config.workspaceRoot, task.id)
+    mkdirSync(workspace, { recursive: true })
+    mkdirSync(config.toolchainDir, { recursive: true })
+
     const baseEnv: Record<string, string> = {}
     for (const [k, v] of Object.entries(process.env)) {
       if (v !== undefined) baseEnv[k] = v
@@ -40,6 +48,8 @@ export class ChildProcessExecutor implements Executor {
       NEW_BRANCH: task.branch!,
       GITHUB_TOKEN: token,
       LLM_API_KEY: agentApiKey,
+      AGENT_WORKSPACE: workspace,
+      MISE_DATA_DIR: config.toolchainDir,
       ...(isCiFix ? { CHECKOUT_EXISTING_BRANCH: '1', FORCE_PUSH: '1' } : {}),
     }
 
@@ -52,7 +62,7 @@ export class ChildProcessExecutor implements Executor {
     })
 
     const id = ulid()
-    const exec = new ChildExecution(proc)
+    const exec = new ChildExecution(proc, workspace)
     this.executions.set(id, exec)
 
     exec.start().catch((err: unknown) => {
@@ -103,12 +113,19 @@ export class ChildProcessExecutor implements Executor {
       // best-effort
     }
 
+    try {
+      rmSync(exec.workspace, { recursive: true, force: true })
+    } catch (err) {
+      console.warn(`[child-process-executor] failed to remove workspace ${exec.workspace}:`, err)
+    }
+
     this.executions.delete(executionId)
   }
 }
 
 class ChildExecution {
   readonly proc: ReturnType<typeof Bun.spawn>
+  readonly workspace: string
   readonly allLines: string[] = []
   stdoutText = ''
   stderrText = ''
@@ -121,8 +138,9 @@ class ChildExecution {
     return this._notifier.promise
   }
 
-  constructor(proc: ReturnType<typeof Bun.spawn>) {
+  constructor(proc: ReturnType<typeof Bun.spawn>, workspace: string) {
     this.proc = proc
+    this.workspace = workspace
   }
 
   private notify(): void {
@@ -140,20 +158,14 @@ class ChildExecution {
 
   async start(): Promise<void> {
     const [stdout, stderr] = await Promise.all([
-      readLines(
-        this.proc.stdout as ReadableStream<Uint8Array>,
-        (line) => {
-          this.allLines.push(line)
-          this.notify()
-        },
-      ),
-      readLines(
-        this.proc.stderr as ReadableStream<Uint8Array>,
-        (line) => {
-          this.allLines.push(line)
-          this.notify()
-        },
-      ),
+      readLines(this.proc.stdout as ReadableStream<Uint8Array>, (line) => {
+        this.allLines.push(line)
+        this.notify()
+      }),
+      readLines(this.proc.stderr as ReadableStream<Uint8Array>, (line) => {
+        this.allLines.push(line)
+        this.notify()
+      }),
     ])
 
     this.stdoutText = stdout

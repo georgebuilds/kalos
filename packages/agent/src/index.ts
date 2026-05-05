@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { cloneRepo, createBranch, commitAll, pushBranch, hasChanges } from './git.js'
 import { runAgentLoop } from './loop.js'
 import { getModel } from './llm/index.js'
 import { openPullRequest } from './pr.js'
+import { installToolchain } from './runtime.js'
 
 // Secrets may be injected via a file (preferred — keeps them out of /proc/PID/environ)
 // or via environment variables (fallback for local dev).
@@ -39,7 +40,9 @@ function loadSecrets(): { githubToken: string; llmApiKey: string } {
   }
 }
 
-const WORKSPACE = '/workspace'
+// Docker executor mounts /workspace; the process executor sets AGENT_WORKSPACE
+// to a per-task host directory.
+const WORKSPACE = process.env.AGENT_WORKSPACE ?? '/workspace'
 
 const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'LLM_API_KEY', 'GITHUB_TOKEN']
 
@@ -79,8 +82,16 @@ async function main(): Promise<void> {
   const CHECKOUT_EXISTING = process.env.CHECKOUT_EXISTING_BRANCH === '1'
   const FORCE_PUSH = process.env.FORCE_PUSH === '1'
 
+  // Ensure the workspace directory exists (process executor passes a fresh
+  // per-task path; in docker /workspace is created by the Dockerfile).
+  mkdirSync(WORKSPACE, { recursive: true })
+
   cloneRepo(env.REPO, secrets.githubToken, WORKSPACE, env.BASE_BRANCH)
   createBranch(env.NEW_BRANCH, env.BASE_BRANCH, WORKSPACE, CHECKOUT_EXISTING)
+
+  // Resolve the project's pinned runtime versions via mise before we start the
+  // loop, so test commands the agent runs see the right node/go/php/etc.
+  installToolchain(WORKSPACE)
 
   const summary = await runAgentLoop({
     description: env.TASK_DESCRIPTION,

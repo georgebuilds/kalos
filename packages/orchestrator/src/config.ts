@@ -1,9 +1,16 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 function requireInt(name: string, defaultVal: number): number {
   const raw = process.env[name]
   if (raw === undefined || raw === '') return defaultVal
   const n = parseInt(raw, 10)
   if (Number.isNaN(n)) throw new Error(`${name} must be an integer, got '${raw}'`)
   return n
+}
+
+function expandHome(p: string): string {
+  return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p
 }
 
 function requireBool(name: string, defaultVal: boolean): boolean {
@@ -26,6 +33,16 @@ export const config = Object.freeze({
   dockerFetchTimeoutMs: requireInt('DOCKER_FETCH_TIMEOUT_MS', 30000),
   dockerSocket: process.env.DOCKER_SOCKET ?? '/var/run/docker.sock',
   agentImage: process.env.AGENT_IMAGE ?? 'kalos-agent:latest',
+  // Process-executor scratch directories. Each task gets its own subdir under
+  // workspaceRoot for the cloned repo; toolchainDir is the shared mise data
+  // root so language runtimes are downloaded once and reused across tasks.
+  workspaceRoot: expandHome(process.env.KALOS_WORKSPACE_ROOT ?? '~/.local/share/kalos/workspaces'),
+  toolchainDir: expandHome(process.env.KALOS_TOOLCHAIN_DIR ?? '~/.local/share/kalos/mise'),
+  // Docker-executor named volume that backs the mise cache inside the agent
+  // container. Auto-created on first task; populated lazily as projects ask
+  // for new (lang, version) pairs. Pre-seeded versions baked into the agent
+  // image are copied in by Docker on the volume's first mount.
+  toolchainVolume: process.env.KALOS_TOOLCHAIN_VOLUME ?? 'kalos-mise-cache',
   kalosApiKey: process.env.KALOS_API_KEY,
   trustProxy: requireBool('KALOS_TRUST_PROXY', false),
   githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,

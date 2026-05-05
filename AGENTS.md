@@ -117,6 +117,9 @@ Kalos exposes its task management as an MCP server via Streamable HTTP (spec `20
 | `GITHUB_INSTALLATION_ID` | orchestrator | GitHub App installation ID |
 | `GITHUB_WEBHOOK_SECRET` | orchestrator | Webhook HMAC secret |
 | `KALOS_API_KEY` | orchestrator | Bearer token for the Kalos REST API |
+| `KALOS_WORKSPACE_ROOT` | orchestrator | Per-task clone scratch dir (`EXECUTOR=process` only, default `~/.local/share/kalos/workspaces`) |
+| `KALOS_TOOLCHAIN_DIR` | orchestrator | Shared mise data dir (`EXECUTOR=process` only, default `~/.local/share/kalos/mise`) |
+| `KALOS_TOOLCHAIN_VOLUME` | orchestrator | Named Docker volume backing the in-container mise cache (`EXECUTOR=docker` only, default `kalos-mise-cache`) |
 | `AGENT_IMAGE` | orchestrator | Docker image to run for each task |
 | `WORKER_POLL_INTERVAL_MS` | orchestrator | How often the worker polls for pending tasks |
 | `MAX_CONCURRENT_TASKS` | orchestrator | Maximum tasks running simultaneously |
@@ -131,10 +134,26 @@ Kalos exposes its task management as an MCP server via Streamable HTTP (spec `20
 | `NEW_BRANCH` | agent | Branch the agent commits to |
 | `TASK_ID` | agent | Task ID for logging |
 | `TASK_DESCRIPTION` | agent | Issue/task text passed to the agent |
-| `AGENT_WORKSPACE` | agent | Working directory inside the container |
+| `AGENT_WORKSPACE` | agent | Working directory (per-task path on process executor, `/workspace` in docker) |
+| `MISE_DATA_DIR` | agent | Shared mise install cache (set by orchestrator on `EXECUTOR=process`) |
 | `CI_FIX_MAX_ATTEMPTS` | orchestrator | Max CI fix retry loops per task (default 3, 0 = disabled) |
 | `CHECKOUT_EXISTING_BRANCH` | agent | If 1, check out an existing remote branch instead of creating one |
 | `FORCE_PUSH` | agent | If 1, push with --force-with-lease |
+
+## Toolchain resolution (mise)
+
+Before the agent loop starts, `installToolchain` (in `packages/agent/src/runtime.ts`) reads the cloned workspace's `.tool-versions` (priority) or `.nvmrc` / `.node-version` / `go.mod` / `composer.json` / `package.json#packageManager`, and runs `mise install` with the resolved set. The agent's `run_command` tool then wraps every shell invocation in `mise exec --` so the pinned versions take precedence on PATH.
+
+**Cache locations:**
+
+| Executor | Cache mechanism | Set by |
+|---|---|---|
+| `process` | host directory at `KALOS_TOOLCHAIN_DIR` (default `~/.local/share/kalos/mise`) | `MISE_DATA_DIR` env var on `Bun.spawn` |
+| `docker` | named Docker volume `KALOS_TOOLCHAIN_VOLUME` (default `kalos-mise-cache`) bound to `/cache/mise` | `MISE_DATA_DIR=/cache/mise` env var, set in the container |
+
+The agent image (`packages/agent/Dockerfile`, based on `oven/bun:1.2-slim`) ships with mise installed system-wide and pre-seeds node 20/22, bun 1.2, and go 1.23 into `/cache/mise`. On the first task ever, Docker's volume init copies these seeds into the named volume. Subsequent tasks reuse the volume directly. PHP is intentionally not pre-seeded; first task per PHP version takes a few minutes to compile, then cached. Build deps (`build-essential`, `libssl-dev`, `libonig-dev`, etc.) are in the image so any mise-supported language compiles cleanly.
+
+Mise is optional in the process executor. If `mise` is not on PATH, both `installToolchain` and `commandArgs` degrade to plain `sh -c` and the agent runs against whatever interpreters the host already has. Tests that drive `run_command` rely on this fallback (`_setMiseAvailability(false)` in `runtime.test.ts`).
 
 ## Agent stdout protocol
 

@@ -1,0 +1,81 @@
+# kalos
+
+> A self-hosted coding-agent orchestrator. POST a task with a repo and a description, kalos clones it, runs an AI loop (Vercel AI SDK + your LLM of choice) inside an isolated execution environment, commits the work, and opens a pull request. Optionally reviews PRs and retries failing CI automatically.
+
+kalos is the kind of agent you'd run yourself: bring your own LLM key, host on a $7/mo VPS or your laptop, talk to it via REST or MCP. Two execution modes share the same agent: a **process** executor (no Docker, runs the agent as a child process — recommended for individuals) and a **docker** executor (per-task containers with `--cap-drop ALL` and a 512 MB cap — recommended for teams or stronger isolation).
+
+Project runtime versions are resolved per-task via [mise](https://mise.jdx.dev), so test commands honor `.tool-versions`, `.nvmrc`, `go.mod`, `composer.json`, and `package.json#packageManager` without you baking those toolchains into the agent.
+
+## Key resources
+
+- [README](https://github.com/georgebuilds/kalos/blob/main/README.md): overview, both deploy paths (PaaS process / VPS docker), every env var, REST API contract
+- [AGENTS.md](https://github.com/georgebuilds/kalos/blob/main/AGENTS.md): full architecture map, conventions, stdout protocol, toolchain resolution — the primary reference for AI agents working on this repo
+- [CONTRIBUTING.md](https://github.com/georgebuilds/kalos/blob/main/CONTRIBUTING.md): how to send patches, code style, test policy
+- [Source](https://github.com/georgebuilds/kalos): the repository on GitHub
+- [Releases](https://github.com/georgebuilds/kalos/releases): GHCR images at `ghcr.io/georgebuilds/kalos-orchestrator:latest` and `ghcr.io/georgebuilds/kalos-agent:latest`
+- [Landing page](https://georgebuilds.github.io/kalos/): one-pane overview
+
+## Architecture overview
+
+Two Bun packages in an npm workspace:
+
+- **`packages/orchestrator`** — Hono HTTP server, `bun:sqlite` task DB (WAL, raw SQL, no ORM), GitHub App auth (hand-rolled JWT), MCP server over Streamable HTTP, hand-rolled Docker client over the Unix socket. Runs the queue worker that picks up pending tasks and dispatches them to the configured executor.
+- **`packages/agent`** — single-shot agent process. Reads the task description from env, runs the Vercel AI SDK loop (`generateText` with tools), commits the diff, pushes the branch, opens the PR, prints `PR_URL=...` to stdout. Toolchain resolution happens before the loop via mise.
+
+The orchestrator and agent are decoupled by **stdout protocol**: the orchestrator scans the agent's stdout for the last `PR_URL=<url>` line. On `SIGTERM` the agent emits `PR_URL=` (empty) so the orchestrator gets a terminal signal rather than hanging.
+
+## Key source files
+
+### Orchestrator
+
+- `packages/orchestrator/src/index.ts` — process entrypoint; runs setup wizard if needed, reconciles in-flight tasks on restart, starts worker, serves HTTP
+- `packages/orchestrator/src/config.ts` — single source of truth for env-driven config
+- `packages/orchestrator/src/queue/worker.ts` — pulls pending tasks, dispatches to executor, persists logs and PR URL
+- `packages/orchestrator/src/queue/reconcile.ts` — startup reconciliation: re-attaches to in-flight Docker containers or marks orphaned process-executor tasks failed
+- `packages/orchestrator/src/executors/executor.ts` — `Executor` interface
+- `packages/orchestrator/src/executors/child-process.ts` — `EXECUTOR=process`: runs agent via `Bun.spawn` with a per-task host workspace and `MISE_DATA_DIR` env
+- `packages/orchestrator/src/executors/docker.ts` — `EXECUTOR=docker`: spawns ephemeral containers with the toolchain cache volume bound at `/cache/mise`
+- `packages/orchestrator/src/docker/client.ts` — minimal Docker daemon client over the Unix socket using Bun's native `fetch` with the `unix` option
+- `packages/orchestrator/src/github/auth.ts` — GitHub App JWT mint + installation token cache
+- `packages/orchestrator/src/github/webhook.ts` + `src/routes/webhooks.ts` — handles `pull_request` (auto-review) and `check_run` (CI fix retry) events
+- `packages/orchestrator/src/github/ci-fix.ts` — re-queues a fix task when CI fails on a `kalos/task-*` branch
+- `packages/orchestrator/src/github/review.ts` — automated PR review via the LLM
+- `packages/orchestrator/src/mcp/router.ts` + `src/mcp/server.ts` — MCP server: `create_task`, `get_task`, `list_tasks`, `get_task_logs`
+- `packages/orchestrator/src/routes/tasks.ts` — REST API: `POST /tasks`, `GET /tasks`, `GET /tasks/:id`, SSE log stream at `GET /tasks/:id/logs`
+- `packages/orchestrator/src/db/index.ts` — SQLite helpers (`insertTask`, `updateTask`, `getPendingTasks`, etc.)
+- `packages/orchestrator/src/wizard/index.ts` — first-run interactive setup
+- `packages/orchestrator/src/ui/dashboard.tsx` — minimal Preact dashboard at `/`
+
+### Agent
+
+- `packages/agent/src/index.ts` — agent entrypoint; loads secrets, clones the repo, runs `installToolchain`, drives the loop, commits, pushes, opens the PR
+- `packages/agent/src/loop.ts` — Vercel AI SDK `generateText` loop with `maxSteps`
+- `packages/agent/src/tools/index.ts` — tools exposed to the LLM: `read_file`, `write_file`, `list_directory`, `delete_file`, `run_command`, `git_commit`, `complete`
+- `packages/agent/src/runtime.ts` — mise integration: `hasMise`, `detectToolchain`, `installToolchain`, `commandArgs`
+- `packages/agent/src/git.ts` — thin git wrappers around `Bun.spawnSync`
+- `packages/agent/src/pr.ts` — Octokit-based pull-request creation
+- `packages/agent/src/llm/index.ts` — model selection across `anthropic`, `openrouter`, `gradient`, `venice`, `ollama`
+- `packages/agent/Dockerfile` — Debian-based image with mise pre-installed and node/bun/go pre-seeded into `/cache/mise`
+
+## Stack
+
+- **Runtime:** Bun everywhere — orchestrator, agent, Dockerfiles
+- **HTTP:** Hono with `Bun.serve`
+- **DB:** `bun:sqlite` (built-in), WAL mode, prepared statements, `synchronous=NORMAL`
+- **Agent loop:** Vercel AI SDK (`ai` + `@ai-sdk/anthropic` / `@ai-sdk/openai`)
+- **GitHub:** `@octokit/rest`, GitHub App auth (hand-rolled JWT signed via `node:crypto`'s `createSign('RSA-SHA256')`)
+- **Docker:** hand-rolled Unix-socket client, no third-party SDK
+- **MCP:** `@modelcontextprotocol/sdk` over Streamable HTTP, stateless transport
+- **Validation:** plain TypeScript checks at REST boundaries; Zod only for MCP tool schemas (transitive dep)
+- **Toolchain pinning:** [mise](https://mise.jdx.dev) on the host (process executor) or in the agent image (docker executor)
+- **Tests:** `bun test --parallel`, no separate test runner
+
+## Conventions
+
+- Bun-native primitives (`Bun.spawn`, `Bun.serve`, `bun:sqlite`) over `node:child_process`, `node:http`, ORMs.
+- Commit messages start with an emoji, then a terse imperative description (e.g. `✨ add executor abstraction`).
+- Tests run via `bun test --parallel` per package; no separate framework or runner.
+
+## License
+
+MIT — see [LICENSE](https://github.com/georgebuilds/kalos/blob/main/LICENSE).

@@ -126,8 +126,14 @@ export class DockerExecutor implements Executor {
         NEW_BRANCH: task.branch!,
         GITHUB_TOKEN: token,
         LLM_API_KEY: agentApiKey,
+        // Shared mise cache so node/bun/go/php downloads are reused across tasks.
+        MISE_DATA_DIR: '/cache/mise',
         ...(isCiFix ? { CHECKOUT_EXISTING_BRANCH: '1', FORCE_PUSH: '1' } : {}),
       },
+      // Named volume — Docker auto-creates on first reference. The image's
+      // pre-seeded /cache/mise contents are copied into the volume on its
+      // very first mount; subsequent mounts reuse whatever the volume holds.
+      binds: [`${config.toolchainVolume}:/cache/mise`],
       memoryBytes: 512 * 1024 * 1024,
       capDrop: ['ALL'],
     })
