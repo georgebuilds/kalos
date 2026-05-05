@@ -1,0 +1,47 @@
+#cloud-config
+# Paste this into the 'User data' field when creating your DigitalOcean droplet.
+# It installs Docker, sets up swap, and clones the repo — all before you SSH in.
+# Once the droplet is ready, SSH in and run: bash /opt/kalos/deploy/setup.sh
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - git
+  - curl
+  - ca-certificates
+  - ufw
+
+write_files:
+  - path: /etc/sysctl.d/99-kalos.conf
+    content: |
+      vm.swappiness=10
+      vm.overcommit_memory=1
+
+runcmd:
+  # Docker
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker root
+
+  # Swap
+  - fallocate -l 2G /swapfile
+  - chmod 600 /swapfile
+  - mkswap /swapfile
+  - swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+  # Clone repo
+  - git clone https://github.com/georgebuilds/kalos.git /opt/kalos
+  - chmod +x /opt/kalos/deploy/setup.sh
+
+  # Firewall — allow SSH + Kalos port only
+  - ufw allow OpenSSH
+  - ufw allow 3000/tcp
+  - ufw --force enable
+
+  # Signal ready
+  - touch /root/.kalos-init-done
+
+final_message: |
+  Kalos server is ready.
+  SSH in and run: bash /opt/kalos/deploy/setup.sh

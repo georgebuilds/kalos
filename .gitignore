@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.env
+kalos.pem
+data/
+.claude/settings.local.json

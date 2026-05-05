@@ -1,0 +1,4 @@
+[test]
+# Run each test file in its own worker to prevent mock.module from one file
+# leaking into another's module registry. Equivalent to: bun test --parallel
+parallel = 4

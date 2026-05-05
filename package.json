@@ -1,0 +1,24 @@
+{
+  "name": "kalos",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "bun",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:orchestrator": "bun --cwd packages/orchestrator run dev",
+    "dev:agent": "bun --cwd packages/agent run dev",
+    "typecheck": "bun --cwd packages/shared run typecheck && bun --cwd packages/orchestrator run typecheck && bun --cwd packages/agent run typecheck",
+    "format": "prettier --write \"packages/*/src/**/*.ts\"",
+    "format:check": "prettier --check \"packages/*/src/**/*.ts\"",
+    "test": "cd packages/orchestrator && bun test --parallel && cd ../agent && bun test --parallel"
+  },
+  "engines": {
+    "bun": ">=1.2.0 <2"
+  },
+  "devDependencies": {
+    "bun-types": "^1.2",
+    "prettier": "^3.0.0"
+  }
+}
