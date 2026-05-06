@@ -519,32 +519,36 @@
         z-index: 1;
         /* Initial frame — keyframe `to` overrides at end of animation. */
         opacity: 0;
-        transform: translate(-380%, 0);
-        animation: dude-reveal 1350ms 1350ms forwards;
+        transform: translate(-380%, 0) rotate(0deg);
+        animation: dude-reveal 1100ms 1350ms forwards;
       }
       /* -380% ≈ own width + gap + roughly half of Korbin's width — deep enough
          that no part of the mascot peeks out past Korbin during the assembly.
-         The arc is a single hop: rise + accelerate right, peak at ~45%, then
-         fall back to baseline at the rest position. Per-keyframe timing
-         functions give it the parabolic feel (ease-out on the way up,
-         ease-in on the way down). */
+         The arc is a single hop with a full 360° clockwise spin: rise +
+         accelerate right + start spinning, peak at ~45% (half-spun), then
+         fall + finish the spin into the rest position. Per-keyframe timing
+         functions give it the parabolic feel (ease-out up, ease-in down);
+         the rotation interpolates linearly across the whole animation. */
       @keyframes dude-reveal {
         0% {
           opacity: 0;
-          transform: translate(-380%, 0);
+          transform: translate(-380%, 0) rotate(0deg);
           animation-timing-function: ease-out;
         }
         18% {
           opacity: 1;
         }
-        45% {
+        50% {
           opacity: 1;
-          transform: translate(-180%, -55%);
+          /* Apex: peak height (-100% of own height) at the X-midpoint of the
+             arc. Both endpoints sit at Y=0 so he takes off and lands at the
+             same baseline — the spin reads as a clean parabolic hop. */
+          transform: translate(-190%, -100%) rotate(180deg);
           animation-timing-function: ease-in;
         }
         100% {
           opacity: 1;
-          transform: translate(0, 0);
+          transform: translate(0, 0) rotate(360deg);
         }
       }
       /* Smoke drifts gently upward */

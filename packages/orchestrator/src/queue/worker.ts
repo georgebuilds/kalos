@@ -105,28 +105,44 @@ async function dispatchTask(task: Task): Promise<void> {
   const branchName = task.branch ?? `kalos/task-${task.id}`
   const resolvedModel = resolveTaskModel(task)
 
+  // Take ownership of the row BEFORE awaiting executor.run. The await can take
+  // 10+ seconds in docker mode (image pull / container create), and a cancel
+  // request landing in that window would otherwise see status=pending, mark
+  // the task cancelled, then have its cancellation silently overwritten by
+  // the post-await `status=running` write. Marking running first means cancel
+  // sees the truth, sets status=cancelled, and we detect that after the await.
+  updateTask(task.id, {
+    status: 'running',
+    branch: branchName,
+    modelId: resolvedModel,
+  })
+
   let executionId: string
   try {
     const result = await executor.run({ ...task, branch: branchName, modelId: resolvedModel })
     executionId = result.executionId
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    updateTask(task.id, {
-      status: 'failed',
-      error: `dispatch failed: ${msg}`,
-      completedAt: Date.now(),
-    })
+    // If a cancel landed while we were awaiting executor.run, keep the
+    // cancellation status — don't overwrite with 'failed'.
+    if (getTask(task.id)?.status !== 'cancelled') {
+      updateTask(task.id, {
+        status: 'failed',
+        error: `dispatch failed: ${msg}`,
+        completedAt: Date.now(),
+      })
+    }
     return
   }
 
-  // Persist the resolved model on the task itself so `GET /tasks/:id` reflects
-  // what actually ran (not just what was requested).
-  updateTask(task.id, {
-    status: 'running',
-    branch: branchName,
-    containerId: executionId,
-    modelId: resolvedModel,
-  })
+  // Cancel may have fired while executor.run was in-flight. The execution is
+  // already running on the host, so we have to tear it down explicitly.
+  if (getTask(task.id)?.status === 'cancelled') {
+    await executor.cleanup(executionId)
+    return
+  }
+
+  updateTask(task.id, { containerId: executionId })
 
   const monitor = monitorTask(task, executionId).catch((err: unknown) => {
     console.error(`[worker] Error watching task ${task.id}:`, err)
@@ -136,28 +152,31 @@ async function dispatchTask(task: Task): Promise<void> {
 }
 
 /**
- * Cancel an in-flight or pending task. Returns true if the task was cancelled,
- * false if it was already in a terminal state (or doesn't exist).
+ * Cancel a pending or running task. Returns true if cancellation took effect,
+ * false if the task is unknown or already in a terminal state.
  *
- * For pending tasks: marks the row directly so the worker skips it.
- * For running tasks: marks the row first (so monitorTask doesn't overwrite the
- * status when executor.wait resolves with exitCode=-1), then asks the executor
- * to tear down the container/process.
+ * Three states the task can be in when cancel arrives:
+ *
+ *   1. Pending      — mark cancelled in DB; the worker tick will skip it.
+ *   2. Running, dispatched but not yet in inFlight (executor.run still
+ *      awaiting) — mark cancelled in DB; dispatchTask sees this after the
+ *      await and tears down the execution itself.
+ *   3. Running, in inFlight — mark cancelled in DB (so monitorTask doesn't
+ *      overwrite the status when executor.wait resolves with exitCode=-1),
+ *      then ask the executor to tear down the container/process now.
  */
 export async function cancelTask(taskId: string): Promise<boolean> {
-  const entry = inFlight.get(taskId)
-  if (!entry) {
-    const task = getTask(taskId)
-    if (!task) return false
-    if (task.status === 'pending') {
-      updateTask(taskId, { status: 'cancelled', completedAt: Date.now() })
-      return true
-    }
-    return false
-  }
+  const task = getTask(taskId)
+  if (!task) return false
+  if (task.status !== 'pending' && task.status !== 'running') return false
 
   updateTask(taskId, { status: 'cancelled', completedAt: Date.now() })
-  await executor.cleanup(entry.executionId)
+
+  const entry = inFlight.get(taskId)
+  if (entry) {
+    await executor.cleanup(entry.executionId)
+  }
+
   return true
 }
 

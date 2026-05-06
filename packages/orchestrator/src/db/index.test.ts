@@ -20,6 +20,13 @@ const {
   setSetting,
   isSetupComplete,
   getRecentTasks,
+  getRecentTasksFiltered,
+  getRepoSettings,
+  setRepoModelId,
+  clearRepoSettings,
+  listRepoSettings,
+  getDefaultModelId,
+  setDefaultModelId,
 } = await import('./index.js')
 
 describe('insertTask / getTask', () => {
@@ -206,5 +213,112 @@ describe('getRecentTasks', () => {
 
   test('defaults to 20', () => {
     expect(getRecentTasks().length).toBeLessThanOrEqual(20)
+  })
+})
+
+describe('getRecentTasksFiltered', () => {
+  test('null/empty filter falls back to getRecentTasks', () => {
+    const all = getRecentTasksFiltered(null, 100)
+    expect(all.length).toBe(getRecentTasks(100).length)
+    const empty = getRecentTasksFiltered([], 100)
+    expect(empty.length).toBe(getRecentTasks(100).length)
+  })
+
+  test('single status filter returns only tasks in that status', () => {
+    const pending = getRecentTasksFiltered(['pending'], 100)
+    expect(pending.every((t) => t.status === 'pending')).toBe(true)
+  })
+
+  test('multi status filter returns the union (e.g. "active jobs")', () => {
+    const active = getRecentTasksFiltered(['pending', 'running'], 100)
+    expect(active.every((t) => t.status === 'pending' || t.status === 'running')).toBe(true)
+  })
+
+  test('respects the limit parameter', () => {
+    expect(getRecentTasksFiltered(['pending'], 1).length).toBeLessThanOrEqual(1)
+  })
+})
+
+describe('insertTask with modelId', () => {
+  test('roundtrips modelId on the row', () => {
+    insertTask({
+      id: 'db-model-1',
+      repo: 'owner/repo',
+      baseBranch: 'main',
+      description: 'pick a model',
+      modelId: 'opus-4.7',
+    })
+    expect(getTask('db-model-1')!.modelId).toBe('opus-4.7')
+  })
+
+  test('defaults modelId to null when omitted', () => {
+    insertTask({
+      id: 'db-model-2',
+      repo: 'owner/repo',
+      baseBranch: 'main',
+      description: 'no model',
+    })
+    expect(getTask('db-model-2')!.modelId).toBeNull()
+  })
+
+  test('updateTask can set modelId after insert', () => {
+    insertTask({
+      id: 'db-model-3',
+      repo: 'owner/repo',
+      baseBranch: 'main',
+      description: 'late binding',
+    })
+    updateTask('db-model-3', { modelId: 'haiku-4.5' })
+    expect(getTask('db-model-3')!.modelId).toBe('haiku-4.5')
+  })
+})
+
+describe('default model setting', () => {
+  test('returns null before set', () => {
+    expect(getDefaultModelId()).toBeNull()
+  })
+
+  test('roundtrips through setDefaultModelId', () => {
+    setDefaultModelId('sonnet-4.6')
+    expect(getDefaultModelId()).toBe('sonnet-4.6')
+  })
+
+  test('setDefaultModelId overwrites previous value', () => {
+    setDefaultModelId('opus-4.7')
+    expect(getDefaultModelId()).toBe('opus-4.7')
+  })
+})
+
+describe('repo settings', () => {
+  test('returns null for an unknown repo', () => {
+    expect(getRepoSettings('not/known')).toBeNull()
+  })
+
+  test('setRepoModelId / getRepoSettings roundtrip', () => {
+    setRepoModelId('owner/repo', 'haiku-4.5')
+    expect(getRepoSettings('owner/repo')).toEqual({ repo: 'owner/repo', modelId: 'haiku-4.5' })
+  })
+
+  test('setRepoModelId(null) keeps the row but clears the override', () => {
+    setRepoModelId('owner/repo2', 'opus-4.7')
+    setRepoModelId('owner/repo2', null)
+    expect(getRepoSettings('owner/repo2')).toEqual({ repo: 'owner/repo2', modelId: null })
+  })
+
+  test('clearRepoSettings drops the row', () => {
+    setRepoModelId('owner/repo3', 'sonnet-4.6')
+    clearRepoSettings('owner/repo3')
+    expect(getRepoSettings('owner/repo3')).toBeNull()
+  })
+
+  test('listRepoSettings returns all configured repos sorted', () => {
+    clearRepoSettings('owner/repo')
+    clearRepoSettings('owner/repo2')
+    setRepoModelId('zzz/late', 'haiku-4.5')
+    setRepoModelId('aaa/early', 'opus-4.7')
+    const all = listRepoSettings()
+    const repos = all.map((r) => r.repo)
+    expect(repos[0]).toBe('aaa/early')
+    expect(repos[repos.length - 1]).toBe('zzz/late')
   })
 })
