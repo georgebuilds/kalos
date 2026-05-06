@@ -474,13 +474,16 @@
         bottom: 0;
         transform: translateX(-50%);
         height: clamp(190px, 38vh, 380px);
-        aspect-ratio: 220 / 240;
+        display: flex;
+        align-items: flex-end;
+        gap: clamp(8px, 1.5vh, 18px);
         z-index: 2;
         pointer-events: none;
       }
       .bird {
-        width: 100%;
         height: 100%;
+        width: auto;
+        aspect-ratio: 220 / 240;
         overflow: visible;
         filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.5))
           drop-shadow(0 -2px 16px rgba(212, 162, 76, 0.08));
@@ -489,6 +492,15 @@
         transform-box: fill-box;
         transform-origin: center;
         will-change: transform, opacity;
+      }
+      /* The little Claude Code dude that stands beside Korbin. Sized to ~1/5 of
+         his height so he reads as "small companion" rather than "second mascot". */
+      .dude {
+        height: 20%;
+        width: auto;
+        aspect-ratio: 60 / 100;
+        margin-bottom: 6px;
+        filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
       }
       /* Smoke drifts gently upward */
       .smoke {
@@ -611,7 +623,7 @@
         <p class="lede">
           give it a task. it clones, codes, and opens the pr.<br />
           <em
-            >self-hosted<span class="pipe">·</span>bring your own llm key<span class="pipe">·</span>runs anywhere bun does.</em
+            >self-hosted<span class="pipe">·</span>powered by claude code<span class="pipe">·</span>runs anywhere node does.</em
           >
         </p>
 
@@ -623,7 +635,7 @@
           <div class="terminal-body">
             <span class="prompt">$</span>
             <code class="cmd" id="cmd"
-              >git clone https://github.com/georgebuilds/kalos &amp;&amp; cd kalos &amp;&amp; bun install</code
+              >git clone https://github.com/georgebuilds/kalos &amp;&amp; cd kalos &amp;&amp; npm install</code
             >
             <button class="copy" id="copy" type="button" aria-label="copy command">copy</button>
           </div>
@@ -644,7 +656,7 @@
         </div>
 
         <div class="footnote">
-          <span>bun · sqlite · docker · github app</span>
+          <span>claude code · node · sqlite · docker · github app</span>
           <span class="sep">·</span>
           <span
             ><a href="https://github.com/georgebuilds/kalos/blob/main/LICENSE" target="_blank" rel="noopener">mit</a></span
@@ -917,6 +929,51 @@
 
         <!-- bottom hem hint -->
         <path d="M 96 224 L 124 224 L 122 232 L 98 232 Z" fill="#3a4030" opacity="0.5" />
+      </svg>
+
+      <!-- The Claude Code dude. Stands on the same baseline as Korbin, sized to
+           1/5 his height by the .dude rule. Anthropic-orange palette. -->
+      <svg
+        class="dude"
+        viewBox="0 0 60 100"
+        xmlns="http://www.w3.org/2000/svg"
+        role="img"
+        aria-label="Claude Code"
+      >
+        <!-- ground shadow -->
+        <ellipse cx="30" cy="98" rx="18" ry="1.6" fill="#1a1714" opacity="0.5" />
+
+        <!-- legs -->
+        <rect x="20" y="68" width="8" height="28" rx="2" fill="#cc785c" />
+        <rect x="32" y="68" width="8" height="28" rx="2" fill="#cc785c" />
+        <!-- shoes -->
+        <rect x="19" y="94" width="10" height="3" rx="1.5" fill="#3a2a22" />
+        <rect x="31" y="94" width="10" height="3" rx="1.5" fill="#3a2a22" />
+
+        <!-- torso (slight taper toward shoulders) -->
+        <path d="M 14 32 L 46 32 L 44 70 L 16 70 Z" fill="#cc785c" />
+
+        <!-- arms -->
+        <rect x="6" y="34" width="8" height="30" rx="3" fill="#cc785c" />
+        <rect x="46" y="34" width="8" height="30" rx="3" fill="#cc785c" />
+
+        <!-- head -->
+        <circle cx="30" cy="18" r="14" fill="#cc785c" />
+        <!-- eyes -->
+        <circle cx="25.5" cy="17" r="1.3" fill="#1a1714" />
+        <circle cx="34.5" cy="17" r="1.3" fill="#1a1714" />
+
+        <!-- ">_" prompt glyph on the chest, signals "code" -->
+        <path
+          d="M 22 50 L 26 54 L 22 58"
+          stroke="#fff8ee"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"
+          opacity="0.9"
+        />
+        <rect x="30" y="56.5" width="10" height="2.2" rx="1" fill="#fff8ee" opacity="0.9" />
       </svg>
     </div>
 

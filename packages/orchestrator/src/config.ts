@@ -46,7 +46,8 @@ export const config = Object.freeze({
   kalosApiKey: process.env.KALOS_API_KEY,
   trustProxy: requireBool('KALOS_TRUST_PROXY', false),
   githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
-  llmApiKey: process.env.LLM_API_KEY ?? process.env.ANTHROPIC_API_KEY,
+  // Anthropic-only — Kalos drives Claude Code, which only speaks Anthropic.
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   // GitHub App vars: validated at call time by getGithubConfig() because the
   // setup wizard may configure them after process startup via the DB.
   githubAppId: process.env.GITHUB_APP_ID,

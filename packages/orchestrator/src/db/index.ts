@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   completed_at INTEGER,
   error TEXT,
   ci_fix_attempts INTEGER NOT NULL DEFAULT 0,
-  parent_task_id TEXT
+  parent_task_id TEXT,
+  model_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS task_logs (
@@ -57,6 +58,13 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   ts INTEGER NOT NULL
 );
 
+-- Per-repo overrides for the global default model. Keyed on the same
+-- "owner/repo" string used elsewhere in the schema.
+CREATE TABLE IF NOT EXISTS repo_settings (
+  repo TEXT PRIMARY KEY,
+  model_id TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_branch ON tasks(branch);
 CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id);
@@ -66,6 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ts ON webhook_deliveries(ts);
 
 try { db.exec('ALTER TABLE tasks ADD COLUMN ci_fix_attempts INTEGER NOT NULL DEFAULT 0') } catch {}
 try { db.exec('ALTER TABLE tasks ADD COLUMN parent_task_id TEXT') } catch {}
+try { db.exec('ALTER TABLE tasks ADD COLUMN model_id TEXT') } catch {}
 
 const LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -89,12 +98,22 @@ export function cleanupOldData(): void {
 
 cleanupOldData()
 
+export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
+
+export const TASK_STATUSES: readonly TaskStatus[] = [
+  'pending',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+] as const
+
 export type Task = {
   id: string
   repo: string
   baseBranch: string
   description: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
+  status: TaskStatus
   branch: string | null
   prUrl: string | null
   containerId: string | null
@@ -104,6 +123,7 @@ export type Task = {
   error: string | null
   ciFixAttempts: number
   parentTaskId: string | null
+  modelId: string | null
 }
 
 export type TaskLog = {
@@ -126,6 +146,7 @@ const camelToSnakeMap: Record<keyof Omit<Task, 'id' | 'createdAt'>, string> = {
   error: 'error',
   ciFixAttempts: 'ci_fix_attempts',
   parentTaskId: 'parent_task_id',
+  modelId: 'model_id',
 }
 
 function toSnakeCase(key: string): string {
@@ -138,7 +159,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     repo: row.repo as string,
     baseBranch: row.base_branch as string,
     description: row.description as string,
-    status: row.status as Task['status'],
+    status: row.status as TaskStatus,
     branch: row.branch as string | null,
     prUrl: row.pr_url as string | null,
     containerId: row.container_id as string | null,
@@ -148,6 +169,7 @@ function rowToTask(row: Record<string, unknown>): Task {
     error: row.error as string | null,
     ciFixAttempts: (row.ci_fix_attempts as number) ?? 0,
     parentTaskId: row.parent_task_id as string | null,
+    modelId: (row.model_id as string | null) ?? null,
   }
 }
 
@@ -162,8 +184,8 @@ function rowToTaskLog(row: Record<string, unknown>): TaskLog {
 
 const stmts = {
   insertTask: db.prepare(`
-    INSERT INTO tasks (id, repo, base_branch, description, branch, ci_fix_attempts, parent_task_id, created_at, updated_at)
-    VALUES ($id, $repo, $base_branch, $description, $branch, $ci_fix_attempts, $parent_task_id, $created_at, $updated_at)
+    INSERT INTO tasks (id, repo, base_branch, description, branch, ci_fix_attempts, parent_task_id, model_id, created_at, updated_at)
+    VALUES ($id, $repo, $base_branch, $description, $branch, $ci_fix_attempts, $parent_task_id, $model_id, $created_at, $updated_at)
   `),
   getTask: db.prepare(`SELECT * FROM tasks WHERE id = ?`),
   getTaskByBranch: db.prepare(`SELECT * FROM tasks WHERE branch = ? ORDER BY created_at DESC LIMIT 1`),
@@ -191,6 +213,7 @@ export function insertTask(task: {
   branch?: string
   ciFixAttempts?: number
   parentTaskId?: string
+  modelId?: string | null
 }): void {
   const now = Date.now()
   stmts.insertTask.run({
@@ -201,6 +224,7 @@ export function insertTask(task: {
     branch: task.branch ?? null,
     ci_fix_attempts: task.ciFixAttempts ?? 0,
     parent_task_id: task.parentTaskId ?? null,
+    model_id: task.modelId ?? null,
     created_at: now,
     updated_at: now,
   })
@@ -335,4 +359,70 @@ export function tryRecordWebhookDelivery(deliveryId: string): boolean {
     webhookStmts.prune.run(Date.now() - WEBHOOK_DEDUP_TTL_MS)
   }
   return true
+}
+
+// ── Repo settings ────────────────────────────────────────────────────────────
+
+export type RepoSettings = {
+  repo: string
+  modelId: string | null
+}
+
+const repoSettingsStmts = {
+  get: db.prepare(`SELECT repo, model_id FROM repo_settings WHERE repo = ?`),
+  upsert: db.prepare(
+    `INSERT INTO repo_settings (repo, model_id) VALUES ($repo, $model_id)
+     ON CONFLICT(repo) DO UPDATE SET model_id = $model_id`,
+  ),
+  delete: db.prepare(`DELETE FROM repo_settings WHERE repo = ?`),
+  list: db.prepare(`SELECT repo, model_id FROM repo_settings ORDER BY repo`),
+}
+
+export function getRepoSettings(repo: string): RepoSettings | null {
+  const row = repoSettingsStmts.get.get(repo) as { repo: string; model_id: string | null } | undefined
+  if (!row) return null
+  return { repo: row.repo, modelId: row.model_id ?? null }
+}
+
+export function setRepoModelId(repo: string, modelId: string | null): void {
+  repoSettingsStmts.upsert.run({ repo, model_id: modelId })
+}
+
+export function clearRepoSettings(repo: string): void {
+  repoSettingsStmts.delete.run(repo)
+}
+
+export function listRepoSettings(): RepoSettings[] {
+  const rows = repoSettingsStmts.list.all() as { repo: string; model_id: string | null }[]
+  return rows.map((r) => ({ repo: r.repo, modelId: r.model_id ?? null }))
+}
+
+// ── Default model (lives in `settings` under a fixed key) ───────────────────
+
+const DEFAULT_MODEL_KEY = 'default_model_id'
+
+export function getDefaultModelId(): string | null {
+  return getSetting(DEFAULT_MODEL_KEY)
+}
+
+export function setDefaultModelId(id: string): void {
+  setSetting(DEFAULT_MODEL_KEY, id)
+}
+
+// ── Recent tasks with optional status filter ─────────────────────────────────
+
+const tasksByStatusBaseSql = `SELECT * FROM tasks`
+
+export function getRecentTasksFiltered(
+  statuses: TaskStatus[] | null,
+  limit = 20,
+): Task[] {
+  // No filter → fall back to the simple recent query.
+  if (!statuses || statuses.length === 0) {
+    return getRecentTasks(limit)
+  }
+  const placeholders = statuses.map(() => '?').join(',')
+  const sql = `${tasksByStatusBaseSql} WHERE status IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`
+  const rows = db.prepare(sql).all(...statuses, limit) as Record<string, unknown>[]
+  return rows.map(rowToTask)
 }

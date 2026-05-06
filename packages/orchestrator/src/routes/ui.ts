@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import * as path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { type Task, getSetting, getRecentTasks } from '../db/index.js'
+import { type Task, getSetting, getRecentTasks, getDefaultModelId } from '../db/index.js'
+import { getModel, FALLBACK_MODEL_ID } from '@kalos/shared/models'
 import { config } from '../config.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -34,11 +35,8 @@ function mask(s: string): string {
 }
 
 function checkEnv() {
-  const provider = (process.env.LLM_PROVIDER ?? 'anthropic').toLowerCase()
-  const needsKey = provider !== 'ollama'
   return [
-    { key: 'LLM_PROVIDER', ok: true, detail: provider },
-    { key: 'LLM_API_KEY', ok: needsKey ? Boolean(config.llmApiKey) : true, detail: needsKey ? (config.llmApiKey ? mask(config.llmApiKey) : 'missing') : 'not required' },
+    { key: 'ANTHROPIC_API_KEY', ok: Boolean(config.anthropicApiKey), detail: config.anthropicApiKey ? mask(config.anthropicApiKey) : 'missing' },
     { key: 'GITHUB_APP_ID', ok: Boolean(config.githubAppId), detail: config.githubAppId ?? 'missing' },
     { key: 'GITHUB_APP_PRIVATE_KEY', ok: Boolean(config.githubAppPrivateKeyPath ?? config.githubAppPrivateKey), detail: config.githubAppPrivateKeyPath ? path.basename(config.githubAppPrivateKeyPath) : config.githubAppPrivateKey ? '(inline)' : 'missing' },
     { key: 'GITHUB_INSTALLATION_ID', ok: Boolean(config.githubInstallationId ?? getSetting('github_installation_id')), detail: config.githubInstallationId ?? getSetting('github_installation_id') ?? 'missing' },
@@ -120,7 +118,11 @@ uiRouter.get('/ui/data', (c) => {
     env: checkEnv(),
     stats: computeStats(tasks),
     version: VERSION,
-    provider: (process.env.LLM_PROVIDER ?? 'anthropic').toLowerCase(),
+    defaultModel: (() => {
+      const id = getDefaultModelId() ?? FALLBACK_MODEL_ID
+      const m = getModel(id)
+      return m ? { id: m.id, label: m.label } : { id, label: id }
+    })(),
     now: new Date().toISOString(),
   })
 })

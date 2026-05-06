@@ -5,6 +5,9 @@ import { config } from './config.js'
 import { tasksRouter } from './routes/tasks.js'
 import { webhooksRouter } from './routes/webhooks.js'
 import { uiRouter } from './routes/ui.js'
+import { modelsRouter } from './routes/models.js'
+import { settingsRouter } from './routes/settings.js'
+import { reposRouter } from './routes/repos.js'
 import { mcpRouter } from './mcp/router.js'
 import { reconcileOnStartup } from './queue/reconcile.js'
 import { startWorker, stopWorker } from './queue/worker.js'
@@ -39,6 +42,9 @@ const app = new Hono()
 
 app.route('/', uiRouter)
 app.route('/tasks', tasksRouter)
+app.route('/models', modelsRouter)
+app.route('/settings', settingsRouter)
+app.route('/repos', reposRouter)
 app.route('/webhooks', webhooksRouter)
 app.route('/mcp', mcpRouter)
 

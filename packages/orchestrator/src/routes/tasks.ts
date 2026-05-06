@@ -1,6 +1,15 @@
 import { Hono } from 'hono'
 import { ulid } from 'ulid'
-import { insertTask, getTask, getLogsForTaskSince, getRecentTasks } from '../db/index.js'
+import {
+  insertTask,
+  getTask,
+  getLogsForTaskSince,
+  getRecentTasksFiltered,
+  TASK_STATUSES,
+  type TaskStatus,
+} from '../db/index.js'
+import { cancelTask } from '../queue/worker.js'
+import { getModel } from '@kalos/shared/models'
 import { apiKeyMiddleware } from '../auth.js'
 import { config } from '../config.js'
 
@@ -8,6 +17,7 @@ function validateCreateTask(body: unknown): {
   repo: string
   baseBranch: string
   description: string
+  modelId: string | null
 } {
   if (typeof body !== 'object' || body === null) throw new Error('Invalid body')
   const b = body as Record<string, unknown>
@@ -16,11 +26,33 @@ function validateCreateTask(body: unknown): {
     throw new Error('repo must be in owner/repo format')
   if (typeof b.description !== 'string' || !b.description)
     throw new Error('description is required')
+  let modelId: string | null = null
+  if (b.modelId !== undefined && b.modelId !== null) {
+    if (typeof b.modelId !== 'string' || !b.modelId) throw new Error('modelId must be a non-empty string')
+    if (!getModel(b.modelId)) throw new Error(`Unknown modelId: ${b.modelId}`)
+    modelId = b.modelId
+  }
   return {
     repo: b.repo,
     baseBranch: typeof b.baseBranch === 'string' ? b.baseBranch : 'main',
     description: b.description,
+    modelId,
   }
+}
+
+function parseStatusParam(raw: string | undefined): TaskStatus[] | null {
+  if (!raw) return null
+  const items = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  if (items.length === 0) return null
+  for (const s of items) {
+    if (!TASK_STATUSES.includes(s as TaskStatus)) {
+      throw new Error(`Unknown status: ${s}. Valid: ${TASK_STATUSES.join(',')}`)
+    }
+  }
+  return items as TaskStatus[]
 }
 
 // In-memory rate limiter: max 20 task creations per IP per minute.
@@ -72,7 +104,7 @@ tasksRouter.post('/', async (c) => {
   if (!checkRateLimit(ip)) {
     return c.json({ error: 'Too many requests' }, 429)
   }
-  let data: { repo: string; baseBranch: string; description: string }
+  let data: { repo: string; baseBranch: string; description: string; modelId: string | null }
   try {
     const body = await c.req.json<unknown>()
     data = validateCreateTask(body)
@@ -81,12 +113,26 @@ tasksRouter.post('/', async (c) => {
   }
 
   const id = ulid()
-  insertTask({ id, ...data })
+  insertTask({
+    id,
+    repo: data.repo,
+    baseBranch: data.baseBranch,
+    description: data.description,
+    modelId: data.modelId,
+  })
   return c.json({ id }, 201)
 })
 
 tasksRouter.get('/', (c) => {
-  const tasks = getRecentTasks(20)
+  let statuses: TaskStatus[] | null
+  try {
+    statuses = parseStatusParam(c.req.query('status'))
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : 'Invalid status'  }, 400)
+  }
+  const limitRaw = c.req.query('limit')
+  const limit = limitRaw ? Math.min(Math.max(parseInt(limitRaw, 10) || 20, 1), 100) : 20
+  const tasks = getRecentTasksFiltered(statuses, limit)
   return c.json(tasks)
 })
 
@@ -95,6 +141,18 @@ tasksRouter.get('/:id', (c) => {
   const task = getTask(id)
   if (!task) return c.json({ error: 'Not found' }, 404)
   return c.json(task)
+})
+
+tasksRouter.post('/:id/cancel', async (c) => {
+  const id = c.req.param('id')
+  const task = getTask(id)
+  if (!task) return c.json({ error: 'Not found' }, 404)
+  const ok = await cancelTask(id)
+  if (!ok) {
+    return c.json({ error: `Task is not cancellable in status: ${task.status}` }, 409)
+  }
+  const updated = getTask(id)
+  return c.json({ id, status: updated?.status ?? 'cancelled' })
 })
 
 tasksRouter.get('/:id/logs', async (c) => {
@@ -120,7 +178,7 @@ tasksRouter.get('/:id/logs', async (c) => {
 
         flush()
 
-        if (task.status === 'completed' || task.status === 'failed') {
+        if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
           controller.enqueue(new TextEncoder().encode('event: done\ndata: {}\n\n'))
           controller.close()
           return
@@ -134,7 +192,11 @@ tasksRouter.get('/:id/logs', async (c) => {
             clearInterval(interval)
             return
           }
-          if (current.status === 'completed' || current.status === 'failed') {
+          if (
+            current.status === 'completed' ||
+            current.status === 'failed' ||
+            current.status === 'cancelled'
+          ) {
             flush()
             controller.enqueue(new TextEncoder().encode('event: done\ndata: {}\n\n'))
             controller.close()

@@ -1,19 +1,26 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
 
-const { mockInsertTask, mockGetTask, mockGetLogsForTaskSince, mockGetRecentTasks } = vi.hoisted(
-  () => ({
-    mockInsertTask: vi.fn(() => {}),
-    mockGetTask: vi.fn((_id: string) => undefined as any),
-    mockGetLogsForTaskSince: vi.fn(() => [] as any[]),
-    mockGetRecentTasks: vi.fn(() => [] as any[]),
-  }),
-)
+const {
+  mockInsertTask,
+  mockGetTask,
+  mockGetLogsForTaskSince,
+  mockGetRecentTasksFiltered,
+  mockCancelTask,
+} = vi.hoisted(() => ({
+  mockInsertTask: vi.fn(() => {}),
+  mockGetTask: vi.fn((_id: string) => undefined as any),
+  mockGetLogsForTaskSince: vi.fn(() => [] as any[]),
+  mockGetRecentTasksFiltered: vi.fn(() => [] as any[]),
+  mockCancelTask: vi.fn(async () => true),
+}))
 
 vi.mock('../db/index.js', () => ({
   insertTask: mockInsertTask,
   getTask: mockGetTask,
   getLogsForTaskSince: mockGetLogsForTaskSince,
-  getRecentTasks: mockGetRecentTasks,
+  getRecentTasks: () => [],
+  getRecentTasksFiltered: mockGetRecentTasksFiltered,
+  TASK_STATUSES: ['pending', 'running', 'completed', 'failed', 'cancelled'],
   // Stubs for the rest of the db exports.
   getTaskByBranch: () => undefined,
   updateTask: () => {},
@@ -27,10 +34,22 @@ vi.mock('../db/index.js', () => ({
   appendLogs: () => {},
   getSetting: () => null,
   setSetting: () => {},
+  getDefaultModelId: () => null,
+  setDefaultModelId: () => {},
+  getRepoSettings: () => null,
+  setRepoModelId: () => {},
+  clearRepoSettings: () => {},
+  listRepoSettings: () => [],
   isSetupComplete: () => false,
   insertPrReview: () => {},
   tryRecordWebhookDelivery: () => true,
   cleanupOldData: () => {},
+}))
+
+// tasks.ts imports cancelTask from worker; stub it so the test doesn't bring
+// up the real worker (which would spin up the executor and DB).
+vi.mock('../queue/worker.js', () => ({
+  cancelTask: mockCancelTask,
 }))
 
 const { tasksRouter } = await import('./tasks.js')
@@ -43,7 +62,8 @@ beforeEach(() => {
   mockInsertTask.mockClear()
   mockGetTask.mockClear()
   mockGetLogsForTaskSince.mockClear()
-  mockGetRecentTasks.mockClear()
+  mockGetRecentTasksFiltered.mockClear()
+  mockCancelTask.mockClear()
   delete process.env.KALOS_API_KEY
 })
 
@@ -219,11 +239,54 @@ describe('API key auth', () => {
 
 describe('GET /', () => {
   test('returns task list', async () => {
-    mockGetRecentTasks.mockImplementation(() => [{ id: 'task-1' }])
+    mockGetRecentTasksFiltered.mockImplementation(() => [{ id: 'task-1' }])
     const res = await request('/')
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(Array.isArray(body)).toBe(true)
+  })
+
+  test('passes parsed status array to getRecentTasksFiltered', async () => {
+    mockGetRecentTasksFiltered.mockImplementation(() => [])
+    const res = await request('/?status=pending,running')
+    expect(res.status).toBe(200)
+    const call = mockGetRecentTasksFiltered.mock.calls[0]! as unknown as [string[] | null, number]
+    expect(call[0]).toEqual(['pending', 'running'])
+  })
+
+  test('returns 400 for unknown status', async () => {
+    const res = await request('/?status=bogus')
+    expect(res.status).toBe(400)
+  })
+})
+
+describe('POST /:id/cancel', () => {
+  test('returns 404 when task not found', async () => {
+    mockGetTask.mockImplementation(() => undefined)
+    const res = await request('/missing/cancel', { method: 'POST' })
+    expect(res.status).toBe(404)
+  })
+
+  test('returns 200 + cancelled status when worker cancels', async () => {
+    mockGetTask.mockImplementation(() => ({ id: 'task-1', status: 'running' }) as any)
+    mockCancelTask.mockImplementation(async () => true)
+    // After cancel, getTask() reflects the new status.
+    let calls = 0
+    mockGetTask.mockImplementation(() => {
+      calls++
+      return { id: 'task-1', status: calls === 1 ? 'running' : 'cancelled' } as any
+    })
+    const res = await request('/task-1/cancel', { method: 'POST' })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.status).toBe('cancelled')
+  })
+
+  test('returns 409 when worker reports task is not cancellable', async () => {
+    mockGetTask.mockImplementation(() => ({ id: 'task-1', status: 'completed' }) as any)
+    mockCancelTask.mockImplementation(async () => false)
+    const res = await request('/task-1/cancel', { method: 'POST' })
+    expect(res.status).toBe(409)
   })
 })
 

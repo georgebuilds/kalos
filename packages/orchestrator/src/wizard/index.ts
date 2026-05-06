@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { box, stepHeader, statusLine, dim, cyan, red, indent } from '../tui/format.js'
 import { ask, secret, confirm, pressEnter, withSpinner } from '../tui/prompt.js'
 import { signAppJwt } from '../github/auth.js'
-import { setSetting } from '../db/index.js'
+import { setSetting, setDefaultModelId } from '../db/index.js'
+import { MODELS, FALLBACK_MODEL_ID, getModel } from '@kalos/shared/models'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PROJECT_ROOT = path.resolve(__dirname, '../../../..')
@@ -51,7 +52,7 @@ async function wizard(): Promise<void> {
       [
         dim("Here's what you'll need to complete setup:"),
         '',
-        dim('• An LLM provider API key — or Ollama running locally'),
+        dim('• An Anthropic API key (Kalos drives Claude Code)'),
         dim('• A GitHub account to create a GitHub App'),
         '',
         dim('The wizard will walk you through each step.'),
@@ -60,63 +61,45 @@ async function wizard(): Promise<void> {
   )
   await pressEnter()
 
-  // ── Step 2: LLM Provider ──────────────────────────────────────────────────
-  process.stdout.write(stepHeader(2, 6, '🤖', 'Choose LLM Provider'))
+  // ── Step 2: Anthropic API key + default model ─────────────────────────────
+  process.stdout.write(stepHeader(2, 6, '🤖', 'Anthropic API key & default model'))
   process.stdout.write(
     indent(
       [
-        dim('Which provider should Kalos use?'),
-        '',
-        '  1. Anthropic (default)',
-        '  2. OpenRouter',
-        '  3. DigitalOcean Gradient',
-        '  4. Venice',
-        '  5. Ollama (local)',
+        dim('Kalos uses Anthropic-issued API keys to run Claude Code.'),
+        dim('Get one at: ') + cyan('https://console.anthropic.com/settings/keys'),
       ].join('\n'),
     ) + '\n\n',
   )
 
-  const providerChoiceRaw = await ask('Choice [1]')
-  const providerChoice = providerChoiceRaw === '' ? '1' : providerChoiceRaw.trim()
+  const anthropicKey = await secret('Paste your Anthropic API key')
 
-  const PROVIDER_MAP: Record<string, string> = {
-    '1': 'anthropic',
-    '2': 'openrouter',
-    '3': 'gradient',
-    '4': 'venice',
-    '5': 'ollama',
+  await withSpinner(
+    'Validating API key…',
+    async () => {
+      const res = await fetch('https://api.anthropic.com/v1/models', {
+        headers: { 'x-api-key': anthropicKey, 'anthropic-version': '2023-06-01' },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!res.ok) throw new Error(`API key invalid (HTTP ${res.status})`)
+    },
+    'API key valid',
+  )
+
+  process.stdout.write('\n' + indent(dim('Pick the default model for new tasks:')) + '\n\n')
+  const numbered = MODELS.map((m, i) => {
+    const tag = m.current ? '' : dim(' (older gen)')
+    return `  ${i + 1}. ${m.label}${tag}`
+  })
+  process.stdout.write(indent(numbered.join('\n')) + '\n\n')
+
+  const fallbackIndex = MODELS.findIndex((m) => m.id === FALLBACK_MODEL_ID) + 1
+  const choiceRaw = await ask(`Choice [${fallbackIndex}]`)
+  const choice = choiceRaw.trim() === '' ? fallbackIndex : parseInt(choiceRaw.trim(), 10)
+  if (!Number.isInteger(choice) || choice < 1 || choice > MODELS.length) {
+    throw new Error(`Invalid choice: ${choiceRaw}`)
   }
-
-  if (!PROVIDER_MAP[providerChoice]) throw new Error(`Invalid choice: ${providerChoice}`)
-  const llmProvider = PROVIDER_MAP[providerChoice]!
-
-  let llmApiKey: string | undefined
-  let llmBaseUrl: string | undefined
-
-  if (llmProvider === 'ollama') {
-    const baseUrlRaw = await ask('Base URL [http://localhost:11434/api]')
-    llmBaseUrl = baseUrlRaw === '' ? 'http://localhost:11434/api' : baseUrlRaw.trim()
-  } else {
-    const keyLabel = llmProvider === 'anthropic' ? 'Anthropic API key' : 'API key'
-    llmApiKey = await secret(`Paste your ${keyLabel}`)
-
-    if (llmProvider === 'anthropic') {
-      await withSpinner(
-        'Validating API key…',
-        async () => {
-          const res = await fetch('https://api.anthropic.com/v1/models', {
-            headers: { 'x-api-key': llmApiKey! },
-            signal: AbortSignal.timeout(15_000),
-          })
-          if (!res.ok) throw new Error(`API key invalid (HTTP ${res.status})`)
-        },
-        'API key valid',
-      )
-    }
-  }
-
-  const modelRaw = await ask('Model [leave blank for default]')
-  const llmModel = modelRaw.trim() === '' ? undefined : modelRaw.trim()
+  const defaultModel = MODELS[choice - 1]!
 
   await pressEnter()
 
@@ -233,30 +216,22 @@ async function wizard(): Promise<void> {
   // ── Step 6: Save Configuration ────────────────────────────────────────────
   process.stdout.write(stepHeader(6, 6, '💾', 'Save Configuration'))
 
-  const llmProviderLabel =
-    {
-      anthropic: 'Anthropic',
-      openrouter: 'OpenRouter',
-      gradient: 'DigitalOcean Gradient',
-      venice: 'Venice',
-      ollama: 'Ollama',
-    }[llmProvider] ?? llmProvider
-
   process.stdout.write(
     indent(
       [
         dim('Writing the following to .env:'),
         '',
-        `  ${'LLM_PROVIDER'.padEnd(24)} ${llmProviderLabel}`,
-        ...(llmApiKey ? [`  ${'LLM_API_KEY'.padEnd(24)} ${mask(llmApiKey)}`] : []),
-        ...(llmBaseUrl ? [`  ${'LLM_BASE_URL'.padEnd(24)} ${llmBaseUrl}`] : []),
-        ...(llmModel ? [`  ${'LLM_MODEL'.padEnd(24)} ${llmModel}`] : []),
-        `  ${'GITHUB_APP_ID'.padEnd(24)} ${appId}`,
-        `  ${'GITHUB_APP_PRIVATE_KEY_PATH'.padEnd(24)} kalos.pem (written separately, chmod 600)`,
-        `  ${'GITHUB_INSTALLATION_ID'.padEnd(24)} ${installationId}`,
+        `  ${'ANTHROPIC_API_KEY'.padEnd(28)} ${mask(anthropicKey)}`,
+        `  ${'GITHUB_APP_ID'.padEnd(28)} ${appId}`,
+        `  ${'GITHUB_APP_PRIVATE_KEY_PATH'.padEnd(28)} kalos.pem (written separately, chmod 600)`,
+        `  ${'GITHUB_INSTALLATION_ID'.padEnd(28)} ${installationId}`,
         ...(webhookSecret
-          ? [`  ${'GITHUB_WEBHOOK_SECRET'.padEnd(24)} ${mask(webhookSecret)}`]
-          : [`  ${'GITHUB_WEBHOOK_SECRET'.padEnd(24)} (skipped)`]),
+          ? [`  ${'GITHUB_WEBHOOK_SECRET'.padEnd(28)} ${mask(webhookSecret)}`]
+          : [`  ${'GITHUB_WEBHOOK_SECRET'.padEnd(28)} (skipped)`]),
+        '',
+        dim('And to the kalos database:'),
+        '',
+        `  ${'default_model_id'.padEnd(28)} ${defaultModel.id}  ${dim('(' + defaultModel.label + ')')}`,
       ].join('\n'),
     ) + '\n\n',
   )
@@ -271,17 +246,20 @@ async function wizard(): Promise<void> {
   fs.writeFileSync(pemFilePath, privateKeyPem.trim() + '\n', { mode: 0o600 })
 
   const envUpdates: Record<string, string> = {
-    LLM_PROVIDER: llmProvider,
+    ANTHROPIC_API_KEY: anthropicKey,
     GITHUB_APP_ID: appId,
     GITHUB_APP_PRIVATE_KEY_PATH: pemFilePath,
     GITHUB_INSTALLATION_ID: installationId,
   }
-  if (llmApiKey) envUpdates.LLM_API_KEY = llmApiKey
-  if (llmBaseUrl) envUpdates.LLM_BASE_URL = llmBaseUrl
-  if (llmModel) envUpdates.LLM_MODEL = llmModel
   if (webhookSecret) envUpdates.GITHUB_WEBHOOK_SECRET = webhookSecret
   writeEnv(envUpdates)
 
+  // Sanity check the chosen model is in the registry — defensive against a
+  // future migration that drops it.
+  if (!getModel(defaultModel.id)) {
+    throw new Error(`Selected model is not in the registry: ${defaultModel.id}`)
+  }
+  setDefaultModelId(defaultModel.id)
   setSetting('setup_complete', 'true')
   setSetting('github_installation_id', installationId)
   setSetting('setup_completed_at', new Date().toISOString())

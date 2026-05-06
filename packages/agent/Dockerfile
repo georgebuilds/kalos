@@ -17,6 +17,10 @@ RUN curl -fsSL https://mise.run | sh && \
     install -m 0755 /root/.local/bin/mise /usr/local/bin/mise && \
     rm -rf /root/.local/bin
 
+# Claude Code is the agent loop. The agent process spawns `claude -p ...` in
+# headless mode for every task. node 22 in the base image runs it.
+RUN npm install -g --no-audit --no-fund @anthropic-ai/claude-code
+
 # /cache/mise is the data root. At runtime it's a Docker named volume mounted
 # in by the orchestrator — the volume's first-mount init copies the contents
 # we seed below into the volume, so subsequent containers reuse the seeds.

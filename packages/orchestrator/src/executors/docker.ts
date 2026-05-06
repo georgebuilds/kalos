@@ -108,8 +108,8 @@ export class DockerExecutor implements Executor {
   }
 
   async run(task: Task): Promise<{ executionId: string }> {
-    const agentApiKey = config.llmApiKey
-    if (!agentApiKey) throw new Error('Missing required env var: LLM_API_KEY')
+    const agentApiKey = config.anthropicApiKey
+    if (!agentApiKey) throw new Error('Missing required env var: ANTHROPIC_API_KEY')
 
     const githubConfig = getGithubConfig()
     const token = await getCachedInstallationToken(githubConfig)
@@ -125,8 +125,12 @@ export class DockerExecutor implements Executor {
         BASE_BRANCH: task.baseBranch,
         NEW_BRANCH: task.branch!,
         GITHUB_TOKEN: token,
-        LLM_API_KEY: agentApiKey,
-        // Shared mise cache so node/bun/go/php downloads are reused across tasks.
+        ANTHROPIC_API_KEY: agentApiKey,
+        // Resolved kalos model id (e.g. "sonnet-4.6"); the agent maps to the
+        // Claude Code --model slug via the shared registry. Worker always
+        // resolves to a non-null value before reaching here.
+        ...(task.modelId ? { KALOS_MODEL_ID: task.modelId } : {}),
+        // Shared mise cache so node/go/php downloads are reused across tasks.
         MISE_DATA_DIR: '/cache/mise',
         ...(isCiFix ? { CHECKOUT_EXISTING_BRANCH: '1', FORCE_PUSH: '1' } : {}),
       },

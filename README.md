@@ -1,6 +1,6 @@
 # Kalos
 
-Kalos is an open-source, self-hosted coding agent orchestrator. You give it a task via REST API, it runs an AI agent loop (clone repo → branch → write code → commit → open PR), and hands you back a pull request URL. Optionally, it can also review PRs and retry failed CI automatically.
+Kalos is an open-source, self-hosted coding agent orchestrator. You give it a task via REST API, it spins up Claude Code against the target repo (clone → branch → write code → commit → open PR), and hands you back a pull request URL. Optionally, it can also review PRs and retry failed CI automatically.
 
 ---
 
@@ -8,28 +8,30 @@ Kalos is an open-source, self-hosted coding agent orchestrator. You give it a ta
 
 1. You `POST /tasks` with a repo and a description of what you want done
 2. Kalos queues the task and dispatches an agent when a slot is free
-3. The agent clones the repo, runs an AI loop (Vercel AI SDK + your LLM of choice), commits the work, and opens a PR
-4. The task status and logs are available via the API in real time
+3. The agent clones the repo, primes mise, runs `claude -p "<your task>"` headless, then commits, pushes, and opens a PR
+4. Task status and logs are available via REST + SSE in real time
 5. Optionally: Kalos reviews the PR via webhook, and re-queues a fix task if CI fails
 
 ---
 
 ## Stack
 
-- **Runtime:** Bun everywhere — orchestrator, agent, Dockerfiles
-- **HTTP:** Hono with `Bun.serve`
-- **Database:** `bun:sqlite` — raw SQL, WAL mode, no ORM
-- **Agent loop:** Vercel AI SDK (`generateText` + tools, `maxSteps`)
-- **LLM:** configurable — supports `anthropic`, `openrouter`, `gradient`, `venice`, `ollama`
+- **Runtime:** Node 22 everywhere — orchestrator, agent, Dockerfiles. TypeScript runs via `tsx` (no compile step).
+- **HTTP:** Hono on `@hono/node-server`
+- **Database:** `better-sqlite3` — raw SQL, WAL mode, no ORM
+- **Agent loop:** [Claude Code](https://docs.claude.com/en/docs/claude-code/overview) in headless mode (`claude -p ...`). Anthropic-only.
+- **Models:** registry of 6 anthropic models in [`packages/shared/src/models/index.ts`](packages/shared/src/models/index.ts) — Opus / Sonnet / Haiku, current + previous gen each
 - **GitHub:** `@octokit/rest`, GitHub App auth via hand-rolled JWT
-- **Docker:** hand-rolled Unix socket client — used only when `EXECUTOR=docker`
-- **Monorepo:** npm workspaces — `packages/orchestrator` + `packages/agent`
+- **Docker:** hand-rolled Unix socket client over `node:http` — used only when `EXECUTOR=docker`
+- **MCP:** Streamable HTTP server exposing task management tools to MCP clients (Claude Desktop, etc.)
+- **Tests:** vitest
+- **Monorepo:** npm workspaces — `packages/orchestrator`, `packages/agent`, `packages/shared`
 
 ---
 
 ## Self-hosting
 
-There are two deployment paths. Both require a GitHub App and an LLM API key. The difference is how agent tasks are executed.
+There are two deployment paths. Both require a GitHub App and an Anthropic API key. The difference is how agent tasks are executed.
 
 | | PaaS | VPS + Docker |
 |---|---|---|
@@ -65,35 +67,37 @@ After saving: generate a **private key** (downloads as a `.pem` file), then **in
 
 ### Path A — PaaS deployment (no Docker, recommended for individuals)
 
-`EXECUTOR=process` runs the agent as a child process on the same machine as the orchestrator. No Docker daemon needed, so you can deploy to any platform that runs a persistent Bun process.
+`EXECUTOR=process` runs the agent as a child Node process on the same machine as the orchestrator. No Docker daemon needed, so you can deploy to any platform that runs a persistent Node process.
 
 **Works on:** Railway, Fly.io, Render, any VPS, your laptop.
 
-**Requirements:** persistent disk for the SQLite database (`DATABASE_URL`). Most PaaS platforms offer this as a volume or persistent storage option.
-
-**Recommended:** install [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`). The agent reads the target repo's `.tool-versions` / `.nvmrc` / `go.mod` / `composer.json` and uses mise to provide the right node/bun/go/php version when running tests. Without mise the agent falls back to whatever interpreters are already on PATH. The runtime cache lives at `KALOS_TOOLCHAIN_DIR` (default `~/.local/share/kalos/mise`) and is shared across tasks.
+**Requirements:**
+- Persistent disk for the SQLite database (`DATABASE_URL`). Most PaaS platforms offer this as a volume.
+- Claude Code on PATH: `npm install -g @anthropic-ai/claude-code`.
+- Recommended: install [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`). The agent reads the target repo's `.tool-versions` / `.nvmrc` / `go.mod` / `composer.json` and uses mise to provide the right node/go/php version when running tests. Without mise the agent falls back to whatever interpreters are already on PATH. Cache lives at `KALOS_TOOLCHAIN_DIR` (default `~/.local/share/kalos/mise`) and is shared across tasks.
 
 #### 1. Clone the repo
 
 ```bash
 git clone https://github.com/georgebuilds/kalos
 cd kalos
-bun install
+npm install
 ```
 
-#### 2. Configure environment
+#### 2. Run the wizard
 
 ```bash
-cp .env.example .env
+npm run dev:orchestrator
 ```
 
-Minimum required:
+The first run drops you into an interactive setup wizard that prompts for your Anthropic key, default model, and GitHub App config, validates each against the live API, and writes the result to `.env` + the kalos database. Re-run the orchestrator after the wizard completes.
+
+If you'd rather skip the wizard, set `setup_complete=true` in the `settings` table and provide these env vars manually:
 
 ```env
 EXECUTOR=process
 
-LLM_PROVIDER=anthropic
-LLM_API_KEY=sk-ant-...
+ANTHROPIC_API_KEY=sk-ant-...
 
 GITHUB_APP_ID=
 GITHUB_APP_PRIVATE_KEY_PATH=kalos.pem   # path to the .pem file you downloaded
@@ -103,21 +107,7 @@ KALOS_API_KEY=your-secret-key           # protects the REST API
 KALOS_TRUST_PROXY=true                  # set this if running behind a reverse proxy
 ```
 
-Copy your `.pem` file to the location you specified in `GITHUB_APP_PRIVATE_KEY_PATH`.
-
-#### 3. Start the orchestrator
-
-```bash
-bun --cwd packages/orchestrator src/index.ts
-```
-
-Or with hot reload for development:
-
-```bash
-bun --cwd packages/orchestrator --watch src/index.ts
-```
-
-#### 4. Verify
+#### 3. Verify
 
 ```bash
 curl http://localhost:3000/health
@@ -133,11 +123,11 @@ You should get `{"ok":true}`.
 
 `EXECUTOR=docker` runs each agent inside an isolated Docker container (512 MB RAM cap, `--cap-drop ALL`). Use this for team deployments or when you want stronger isolation.
 
-**Requires:** a Linux VPS with Docker daemon, and the `kalos-agent` image built or pulled.
+**Requires:** a Linux VPS with Docker daemon, and the `kalos-agent` image built or pulled. The agent image already includes Claude Code (`@anthropic-ai/claude-code` installed globally), node 22, and mise.
 
 Pre-built images are published to GHCR at `ghcr.io/georgebuilds/kalos-orchestrator:latest` and `ghcr.io/georgebuilds/kalos-agent:latest`.
 
-The agent image ships with [mise](https://mise.jdx.dev) and pre-seeded copies of node 20/22, bun 1.2, and go 1.23. A named Docker volume (`KALOS_TOOLCHAIN_VOLUME`, default `kalos-mise-cache`) persists the cache across tasks so first-task latency for any new (language, version) pair is paid once. PHP is **not** pre-seeded — its plugin compiles from source — but the build deps are baked in, so the first task that wants `php@8.x` will install it (slow), and every task after will reuse the volume.
+The agent image ships with [mise](https://mise.jdx.dev) and pre-seeded copies of node 20/22 and go 1.23. A named Docker volume (`KALOS_TOOLCHAIN_VOLUME`, default `kalos-mise-cache`) persists the cache across tasks so first-task latency for any new (language, version) pair is paid once. PHP is **not** pre-seeded — its plugin compiles from source — but the build deps are baked in, so the first task that wants `php@8.x` will install it (slow), and every task after will reuse the volume.
 
 **Minimum spec:** 1 vCPU / 1 GB RAM / 25 GB disk (a $7/mo Hetzner or DigitalOcean box works fine).
 
@@ -189,11 +179,11 @@ make logs-prod # tail live logs
 ```bash
 git clone https://github.com/georgebuilds/kalos
 cd kalos
-bun install
-cp .env.example .env
-# fill in LLM_API_KEY and GitHub App vars
-bun --cwd packages/orchestrator --watch src/index.ts
+npm install
+npm run dev:orchestrator
 ```
+
+The first invocation runs the setup wizard. After that, `npm run dev:orchestrator` reloads on file changes via `tsx watch`.
 
 Docker is not required for local development — `EXECUTOR=process` is the default.
 
@@ -201,14 +191,14 @@ If you want to test the Docker executor locally:
 
 ```bash
 make agent-image      # builds kalos-agent:latest
-EXECUTOR=docker bun --cwd packages/orchestrator src/index.ts
+EXECUTOR=docker npm run dev:orchestrator
 ```
 
 ---
 
 ## REST API
 
-All task endpoints require the `X-Api-Key` header when `KALOS_API_KEY` is set.
+All endpoints require the `X-Api-Key` header when `KALOS_API_KEY` is set.
 
 ### Create a task
 
@@ -220,7 +210,8 @@ X-Api-Key: your-api-key
 {
   "repo": "owner/repo",
   "description": "Add input validation to the login form",
-  "baseBranch": "main"   // optional, defaults to "main"
+  "baseBranch": "main",        // optional, defaults to "main"
+  "modelId": "opus-4.7"        // optional; defaults to repo override → global default
 }
 ```
 
@@ -234,25 +225,32 @@ Response:
 
 ```http
 GET /tasks
-X-Api-Key: your-api-key
+GET /tasks?status=pending,running        // filter — comma-separated
+GET /tasks?status=running&limit=50
 ```
 
 ### Get a task
 
 ```http
 GET /tasks/:id
-X-Api-Key: your-api-key
 ```
 
-Task statuses: `pending` → `running` → `completed` | `failed`
+Task statuses: `pending` → `running` → `completed` | `failed` | `cancelled`.
 
 Completed tasks include a `prUrl` field with the pull request URL.
+
+### Cancel a task
+
+```http
+POST /tasks/:id/cancel
+```
+
+Cancels a pending or running task. Returns 409 if the task is already in a terminal state.
 
 ### Stream task logs
 
 ```http
 GET /tasks/:id/logs
-X-Api-Key: your-api-key
 ```
 
 Returns a Server-Sent Events stream. Each event is a JSON object with `line` and `ts`. A final `event: done` is emitted when the task finishes.
@@ -261,6 +259,19 @@ Returns a Server-Sent Events stream. Each event is a JSON object with `line` and
 curl -N -H "X-Api-Key: your-key" http://localhost:3000/tasks/01HXYZ.../logs
 ```
 
+### Models & defaults
+
+```http
+GET /models                              # list registry entries
+GET  /settings/default_model
+PUT  /settings/default_model             # body: { "modelId": "sonnet-4.6" }
+GET  /repos/:owner/:repo/settings        # per-repo override
+PUT  /repos/:owner/:repo/settings        # body: { "modelId": "opus-4.7" } or { "modelId": null }
+DELETE /repos/:owner/:repo/settings
+```
+
+Model precedence at dispatch: per-task `modelId` → per-repo override → global default → registry fallback (`sonnet-4.6`).
+
 ### GitHub webhook
 
 ```http
@@ -268,6 +279,12 @@ POST /webhooks/github
 ```
 
 Handles `pull_request` events (triggers automatic PR review) and `check_run` events (triggers CI fix retry). Requires `GITHUB_WEBHOOK_SECRET`.
+
+---
+
+## MCP server
+
+Kalos exposes its task management as an MCP server via Streamable HTTP at `/mcp`. Tools: `create_task`, `get_task`, `list_tasks` (with optional `status` filter), `cancel_task`, `get_task_logs`. See [AGENTS.md](./AGENTS.md) for the full schema and a Claude Desktop config snippet.
 
 ---
 
@@ -284,10 +301,7 @@ Handles `pull_request` events (triggers automatic PR review) and `check_run` eve
 | `WORKER_POLL_INTERVAL_MS` | `2000` | How often the worker checks for pending tasks |
 | `TASK_TIMEOUT_MS` | `600000` | Per-task timeout in ms |
 | `CI_FIX_MAX_ATTEMPTS` | `3` | Max CI fix retries per task. Set to `0` to disable |
-| `LLM_PROVIDER` | — | LLM backend: `anthropic`, `openrouter`, `gradient`, `venice`, `ollama` |
-| `LLM_MODEL` | — | Model name |
-| `LLM_API_KEY` | — | API key for the LLM provider |
-| `LLM_BASE_URL` | — | Base URL override (required for `ollama`) |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key — passed to Claude Code as the agent loop's auth |
 | `GITHUB_APP_ID` | — | GitHub App ID |
 | `GITHUB_APP_PRIVATE_KEY_PATH` | `kalos.pem` | Path to the GitHub App private key PEM file |
 | `GITHUB_APP_PRIVATE_KEY` | — | Inline PEM string (alternative to path) |
@@ -298,6 +312,8 @@ Handles `pull_request` events (triggers automatic PR review) and `check_run` eve
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker daemon socket (`EXECUTOR=docker` only) |
 | `AGENT_IMAGE` | `kalos-agent:latest` | Docker image for agent containers (`EXECUTOR=docker` only) |
 | `KALOS_TOOLCHAIN_VOLUME` | `kalos-mise-cache` | Docker named volume backing the in-container mise cache (`EXECUTOR=docker` only) |
+
+The default model lives in the kalos database (`settings.default_model_id`), set by the wizard or via `PUT /settings/default_model`.
 
 ---
 
@@ -313,6 +329,7 @@ For team or org deployments, increase `MAX_CONCURRENT_TASKS` to match your resou
 
 - **`EXECUTOR=process`:** the agent runs as the orchestrator's OS user with access to the host filesystem. Set `KALOS_API_KEY` and only accept tasks from repos you trust. Not suitable for multi-tenant use.
 - **`EXECUTOR=docker`:** containers run with `--cap-drop ALL` and a 512 MB memory limit. The only mount is the named toolchain volume (`kalos-mise-cache`) at `/cache/mise` — agents have no access to the host filesystem. Better isolation than process mode, but prompt injection could still exfiltrate data over the network.
+- The agent strips secrets (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN`) from the env it hands to Claude Code's Bash tool. Claude can't `env | curl` your tokens to a third party.
 - API key auth via `KALOS_API_KEY` (strongly recommended in both cases)
 - Webhook payloads validated with HMAC-SHA256 against `GITHUB_WEBHOOK_SECRET`
 - Rate limiting on task creation: 20 requests per IP per minute
@@ -323,16 +340,16 @@ For team or org deployments, increase `MAX_CONCURRENT_TASKS` to match your resou
 
 ```bash
 # Type check all packages
-make typecheck
+npm run typecheck
 
-# Run tests
-bun test
+# Run tests (vitest)
+npm test
 
 # Format
-bun run format
+npm run format
 
 # Format check (used in CI)
-bun run format:check
+npm run format:check
 ```
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](./AGENTS.md) for the full architecture reference.

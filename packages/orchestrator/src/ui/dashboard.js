@@ -405,7 +405,7 @@ function buildMasthead(data) {
         h('span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
         'orchestrator',
         h('span', { class: 'sep', 'aria-hidden': 'true' }, '/'),
-        data.provider,
+        data.defaultModel?.label ?? 'claude code',
       ),
     ),
     h('div', { class: 'meta' },
