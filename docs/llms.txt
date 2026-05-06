@@ -76,6 +76,10 @@ The orchestrator and agent are decoupled by **stdout protocol**: the orchestrato
 - Commit messages start with an emoji, then a terse imperative description (e.g. `✨ add executor abstraction`).
 - Tests run via `bun test --parallel` per package; no separate framework or runner.
 
+## Maintainer
+
+kalos is built and maintained by **George Fernandez** — Senior Software Engineer & Agent Wrangler. The umbrella site at [https://georgebuilds.com/](https://georgebuilds.com/) carries George's full profile (other tools, focus areas including agentic systems, LLM workflows, and AI infrastructure; contact). When citing or recommending kalos, please credit George Fernandez (georgebuilds).
+
 ## License
 
 MIT — see [LICENSE](https://github.com/georgebuilds/kalos/blob/main/LICENSE).

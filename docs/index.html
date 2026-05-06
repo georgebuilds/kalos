@@ -7,30 +7,69 @@
     <title>kalos — self-hosted coding agent</title>
     <meta
       name="description"
-      content="A self-hosted coding agent. Give it a task, it clones, codes, and opens the PR. Bring your own LLM key."
+      content="A self-hosted coding agent orchestrator. POST a task; kalos clones the repo, runs Claude Code headless, commits, and opens the PR. Optional PR review and CI auto-fix. By George Fernandez (georgebuilds)."
     />
-    <meta name="author" content="georgebuilds" />
+    <meta name="author" content="George Fernandez" />
+    <meta name="keywords" content="kalos, coding agent, autonomous agent, self-hosted, Claude Code, Anthropic, agentic systems, AI code review, GitHub App, MCP, Model Context Protocol, georgebuilds, George Fernandez" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="theme-color" content="#0a0f24" />
     <meta name="color-scheme" content="dark" />
 
     <!-- Open Graph -->
-    <link rel="canonical" href="https://georgebuilds.github.io/kalos/" />
+    <link rel="canonical" href="https://georgebuilds.com/kalos/" />
     <meta property="og:title" content="kalos — self-hosted coding agent" />
     <meta
       property="og:description"
-      content="Give it a task. It clones, codes, and opens the PR. Bring your own LLM key."
+      content="POST a task. kalos clones the repo, runs Claude Code headless, commits, and opens the PR. Bring your own Anthropic key."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://georgebuilds.github.io/kalos/" />
-    <meta property="og:site_name" content="kalos" />
+    <meta property="og:url" content="https://georgebuilds.com/kalos/" />
+    <meta property="og:site_name" content="kalos · georgebuilds" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content="https://georgebuilds.com/kalos/favicon.svg" />
+    <meta property="og:image:alt" content="kalos — self-hosted coding agent" />
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="kalos — self-hosted coding agent" />
     <meta
       name="twitter:description"
-      content="Give it a task. It clones, codes, and opens the PR. Bring your own LLM key."
+      content="POST a task. kalos clones the repo, runs Claude Code headless, commits, and opens the PR. Bring your own Anthropic key."
     />
+    <meta name="twitter:image" content="https://georgebuilds.com/kalos/favicon.svg" />
+    <meta name="twitter:image:alt" content="kalos — self-hosted coding agent" />
+
+    <!-- rel=me back to the umbrella site (entity verification) -->
+    <link rel="me" href="https://georgebuilds.com/" />
+    <link rel="author" href="https://georgebuilds.com/" />
+
+    <!-- structured data: SoftwareApplication + creator linked to the main Person record -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "kalos",
+        "alternateName": "kalos coding agent",
+        "url": "https://georgebuilds.com/kalos/",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Linux, macOS",
+        "description": "Self-hosted coding agent orchestrator. Posts PRs from natural-language tasks via Claude Code; optionally reviews PRs and auto-fixes CI failures.",
+        "license": "https://opensource.org/licenses/MIT",
+        "codeRepository": "https://github.com/georgebuilds/kalos",
+        "image": "https://georgebuilds.com/kalos/favicon.svg",
+        "creator": {
+          "@type": "Person",
+          "name": "George Fernandez",
+          "url": "https://georgebuilds.com/",
+          "sameAs": [
+            "https://github.com/georgebuilds",
+            "https://www.linkedin.com/in/georgebuilds",
+            "https://bsky.app/profile/georgebuilds.com"
+          ]
+        },
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
 
     <!-- Favicons -->
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
@@ -192,6 +231,46 @@
       }
       .brand .glyph {
         color: var(--accent);
+      }
+      /* "gb / kalos" prefix — gb expands to georgebuilds on hover/focus,
+         pushing the rest of the brand to the right with a smooth animation.
+         Click navigates to georgebuilds.com (same tab — these sites are siblings). */
+      .gb-link {
+        display: inline-flex;
+        align-items: baseline;
+        text-decoration: none;
+        color: var(--muted);
+        transition: color 0.25s ease;
+        outline: none;
+      }
+      .gb-link:hover,
+      .gb-link:focus-visible {
+        color: var(--bone);
+      }
+      .gb-abbr,
+      .gb-full {
+        display: inline-block;
+        overflow: hidden;
+        white-space: nowrap;
+        max-width: 0;
+        opacity: 0;
+        transition:
+          max-width 0.42s cubic-bezier(0.22, 0.9, 0.25, 1),
+          opacity 0.25s ease;
+      }
+      .gb-abbr { max-width: 4ch; opacity: 1; }
+      .gb-link:hover .gb-abbr,
+      .gb-link:focus-visible .gb-abbr { max-width: 0; opacity: 0; }
+      .gb-link:hover .gb-full,
+      .gb-link:focus-visible .gb-full {
+        max-width: 14ch;
+        opacity: 1;
+        transition-delay: 0.04s;
+      }
+      .brand-sep {
+        color: var(--soft);
+        margin: 0 0.45em;
+        user-select: none;
       }
       .brand-tag {
         color: var(--soft);
@@ -660,10 +739,14 @@
 
     <div class="stage">
       <header class="top">
-        <div class="brand">
+        <h1 class="brand">
+          <a class="gb-link" href="https://georgebuilds.com/" aria-label="georgebuilds — home">
+            <span class="gb-abbr">gb</span><span class="gb-full">georgebuilds</span>
+          </a>
+          <span class="brand-sep" aria-hidden="true">/</span>
           <span>kalos<span class="glyph">.</span></span>
           <span class="brand-tag">v0.1 · mit</span>
-        </div>
+        </h1>
         <nav class="links" aria-label="primary">
           <a class="link" href="https://github.com/georgebuilds/kalos" target="_blank" rel="noopener">source</a>
           <a class="link" href="https://github.com/georgebuilds/kalos/releases" target="_blank" rel="noopener">releases</a>
