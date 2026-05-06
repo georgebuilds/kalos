@@ -1100,6 +1100,81 @@
         }
       })();
 
+      // ===== DUDE STROLL =====
+      // After Korbin's reveal hop completes, the Claude Code mascot promotes
+      // himself to fixed-position at the bottom of the viewport (z-index above
+      // the bird now) and starts walking back and forth, bouncing off each
+      // wall. Bypassed under prefers-reduced-motion.
+      (() => {
+        const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reduced) return;
+        const dude = document.querySelector('.dude');
+        if (!dude) return;
+
+        // The reveal animation uses `forwards` fill mode, so we rely on
+        // animationend instead of a setTimeout — fires accurately even if the
+        // page was throttled (e.g. tab was backgrounded during the delay).
+        dude.addEventListener('animationend', (e) => {
+          if (e.animationName !== 'dude-reveal') return;
+          startStroll();
+        }, { once: true });
+
+        function startStroll() {
+          // Capture the post-jump visual position + size so the stroller
+          // takes over from exactly where the dude landed.
+          const r = dude.getBoundingClientRect();
+
+          // Build a fresh stroller clone instead of moving the original.
+          // Keeping the original in the bird-wrap flex slot (via
+          // visibility: hidden) preserves the wrap's width — otherwise the
+          // wrap shrinks to just Korbin's width and his `translateX(-50%)`
+          // centering shifts him visibly. The bird must never appear to move.
+          const stroller = dude.cloneNode(true);
+          stroller.style.cssText = [
+            'position: fixed',
+            `left: ${r.left}px`,
+            'top: auto',
+            'bottom: 6px',
+            `width: ${r.width}px`,
+            `height: ${r.height}px`,
+            'margin: 0',
+            'transform: none',
+            'opacity: 1',
+            'animation: none',
+            'z-index: 3',
+            'pointer-events: none',
+            'filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45))',
+          ].join('; ')
+          document.body.appendChild(stroller);
+
+          // Hide the original — visibility: hidden retains layout space so
+          // bird-wrap stays the same width and Korbin doesn't recenter.
+          dude.style.visibility = 'hidden';
+
+          // Clamp the captured X to the current viewport in case the window
+          // resized while the reveal animation was playing.
+          const initialMaxX = Math.max(0, window.innerWidth - r.width);
+          let x = Math.min(Math.max(r.left, 0), initialMaxX);
+          stroller.style.left = x + 'px';
+
+          let dx = 1.1;     // ~66 px/s at 60fps — a stroll, not a sprint
+          let lastTs = 0;
+          const w = r.width;
+
+          function frame(ts) {
+            const dt = lastTs ? Math.min(ts - lastTs, 64) / 16.67 : 1;
+            lastTs = ts;
+            const maxX = Math.max(0, window.innerWidth - w);
+            x += dx * dt;
+            if (x >= maxX) { x = maxX; dx = -Math.abs(dx); }
+            if (x <= 0)    { x = 0;    dx = Math.abs(dx); }
+            stroller.style.left = x + 'px';
+            requestAnimationFrame(frame);
+          }
+          requestAnimationFrame(frame);
+        }
+      })();
+
       // ===== COPY =====
       (() => {
         const cmd = document.getElementById('cmd').textContent.trim();
