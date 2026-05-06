@@ -201,6 +201,12 @@ EXECUTOR=docker npm run dev:orchestrator
 
 ---
 
+## Dashboard
+
+Visit `http://localhost:3000/` in a browser for a live read-only view of recent tasks, env-var health checks, and the active default model. Same `X-Api-Key` (passed via `?key=` on the URL or the `X-Api-Key` header) — gated by the same auth as the REST API.
+
+---
+
 ## REST API
 
 All endpoints require the `X-Api-Key` header. (The orchestrator refuses to start without `KALOS_API_KEY`; the only way to run open is to explicitly set `KALOS_ALLOW_OPEN=true`.)
