@@ -6,23 +6,9 @@ import { type Task, getSetting, getRecentTasks } from '../db/index.js'
 import { config } from '../config.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const isProd = process.env.NODE_ENV === 'production'
 
-const buildResult = await Bun.build({
-  entrypoints: [path.join(here, '..', 'ui', 'dashboard.tsx')],
-  target: 'browser',
-  format: 'esm',
-  minify: isProd,
-  sourcemap: isProd ? 'none' : 'inline',
-})
-
-if (!buildResult.success) {
-  console.error('[ui] dashboard build failed:')
-  for (const log of buildResult.logs) console.error(log)
-  throw new Error('Dashboard build failed — see logs above')
-}
-
-const bundleJs = (await buildResult.outputs[0]!.text()).replace(/<\/script/gi, '<\\/script')
+const bundleJs = readFileSync(path.join(here, '..', 'ui', 'dashboard.js'), 'utf8')
+  .replace(/<\/script/gi, '<\\/script')
 
 const html = `<!doctype html>
 <html lang="en">
