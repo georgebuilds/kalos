@@ -72,9 +72,12 @@ After saving: generate a **private key** (downloads as a `.pem` file), then **in
 **Works on:** Railway, Fly.io, Render, any VPS, your laptop.
 
 **Requirements:**
+- Node 22 on the host. (The orchestrator and agent both run as Node processes; in process mode the agent shares the orchestrator's host.)
 - Persistent disk for the SQLite database (`DATABASE_URL`). Most PaaS platforms offer this as a volume.
-- Claude Code on PATH: `npm install -g @anthropic-ai/claude-code`.
+- Claude Code on PATH: `npm install -g @anthropic-ai/claude-code`. The agent shells out to `claude` for every task.
 - Recommended: install [mise](https://mise.jdx.dev) on the host (`curl https://mise.run | sh`). The agent reads the target repo's `.tool-versions` / `.nvmrc` / `go.mod` / `composer.json` and uses mise to provide the right node/go/php version when running tests. Without mise the agent falls back to whatever interpreters are already on PATH. Cache lives at `KALOS_TOOLCHAIN_DIR` (default `~/.local/share/kalos/mise`) and is shared across tasks.
+
+> Process mode means the host carries the full agent toolchain (node, mise, claude code, build-essential for any compiled languages) plus per-task workspace disk. Docker mode keeps the orchestrator host slim — the heavy stuff lives inside the per-task container instead.
 
 #### 1. Clone the repo
 
@@ -103,9 +106,11 @@ GITHUB_APP_ID=
 GITHUB_APP_PRIVATE_KEY_PATH=kalos.pem   # path to the .pem file you downloaded
 GITHUB_INSTALLATION_ID=
 
-KALOS_API_KEY=your-secret-key           # protects the REST API
+KALOS_API_KEY=...                       # required — generate with: openssl rand -hex 32
 KALOS_TRUST_PROXY=true                  # set this if running behind a reverse proxy
 ```
+
+**`KALOS_API_KEY` is required.** The orchestrator refuses to start without it (the wizard auto-generates one for new installs). Set `KALOS_ALLOW_OPEN=true` to opt back into open auth — intended for trusted localhost dev only; do not set in production.
 
 #### 3. Verify
 
@@ -198,7 +203,7 @@ EXECUTOR=docker npm run dev:orchestrator
 
 ## REST API
 
-All endpoints require the `X-Api-Key` header when `KALOS_API_KEY` is set.
+All endpoints require the `X-Api-Key` header. (The orchestrator refuses to start without `KALOS_API_KEY`; the only way to run open is to explicitly set `KALOS_ALLOW_OPEN=true`.)
 
 ### Create a task
 
@@ -295,7 +300,8 @@ Kalos exposes its task management as an MCP server via Streamable HTTP at `/mcp`
 | `EXECUTOR` | `process` | `process` — agent runs as a child process; `docker` — agent runs in a container |
 | `PORT` | `3000` | HTTP port |
 | `DATABASE_URL` | `kalos.db` | SQLite file path (must be on persistent storage in PaaS deployments) |
-| `KALOS_API_KEY` | — | Bearer token for the REST API. Strongly recommended in production |
+| `KALOS_API_KEY` | — | Bearer token for the REST API + MCP server. **Required** — orchestrator refuses to start without it (wizard auto-generates one) |
+| `KALOS_ALLOW_OPEN` | `false` | Opt back into open auth when `KALOS_API_KEY` is unset. Localhost dev only — do not set in production |
 | `KALOS_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for rate limiting — set to `true` behind a reverse proxy |
 | `MAX_CONCURRENT_TASKS` | `1` | Max agents running simultaneously |
 | `WORKER_POLL_INTERVAL_MS` | `2000` | How often the worker checks for pending tasks |

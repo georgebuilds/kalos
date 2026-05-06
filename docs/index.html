@@ -493,12 +493,14 @@
         transform-origin: center;
         will-change: transform, opacity;
       }
-      /* The little Claude Code dude that stands beside Korbin. Sized to ~1/5 of
-         his height so he reads as "small companion" rather than "second mascot". */
+      /* The Claude Code mascot — pixel-art critter who stands beside Korbin.
+         Sized to ~1/5 of Korbin's height so he reads as "small companion"
+         rather than "second mascot". shape-rendering on the SVG keeps the
+         block edges crisp at any size. */
       .dude {
         height: 20%;
         width: auto;
-        aspect-ratio: 60 / 100;
+        aspect-ratio: 14 / 12;
         margin-bottom: 6px;
         filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
       }
@@ -931,49 +933,29 @@
         <path d="M 96 224 L 124 224 L 122 232 L 98 232 Z" fill="#3a4030" opacity="0.5" />
       </svg>
 
-      <!-- The Claude Code dude. Stands on the same baseline as Korbin, sized to
-           1/5 his height by the .dude rule. Anthropic-orange palette. -->
+      <!-- The Claude Code mascot — stout pixel-art critter with two black-square
+           eyes, side bumps, and stubby legs. shape-rendering:crispEdges keeps
+           the block edges sharp at any size. Each rect is one logical "pixel"
+           on a 14×12 grid. -->
       <svg
         class="dude"
-        viewBox="0 0 60 100"
+        viewBox="0 0 14 12"
         xmlns="http://www.w3.org/2000/svg"
+        shape-rendering="crispEdges"
         role="img"
-        aria-label="Claude Code"
+        aria-label="Claude Code mascot"
       >
-        <!-- ground shadow -->
-        <ellipse cx="30" cy="98" rx="18" ry="1.6" fill="#1a1714" opacity="0.5" />
-
-        <!-- legs -->
-        <rect x="20" y="68" width="8" height="28" rx="2" fill="#cc785c" />
-        <rect x="32" y="68" width="8" height="28" rx="2" fill="#cc785c" />
-        <!-- shoes -->
-        <rect x="19" y="94" width="10" height="3" rx="1.5" fill="#3a2a22" />
-        <rect x="31" y="94" width="10" height="3" rx="1.5" fill="#3a2a22" />
-
-        <!-- torso (slight taper toward shoulders) -->
-        <path d="M 14 32 L 46 32 L 44 70 L 16 70 Z" fill="#cc785c" />
-
-        <!-- arms -->
-        <rect x="6" y="34" width="8" height="30" rx="3" fill="#cc785c" />
-        <rect x="46" y="34" width="8" height="30" rx="3" fill="#cc785c" />
-
-        <!-- head -->
-        <circle cx="30" cy="18" r="14" fill="#cc785c" />
+        <!-- main body block -->
+        <rect x="2" y="1" width="10" height="8" fill="#cc785c" />
+        <!-- side shoulder bumps -->
+        <rect x="1" y="3" width="1" height="3" fill="#cc785c" />
+        <rect x="12" y="3" width="1" height="3" fill="#cc785c" />
         <!-- eyes -->
-        <circle cx="25.5" cy="17" r="1.3" fill="#1a1714" />
-        <circle cx="34.5" cy="17" r="1.3" fill="#1a1714" />
-
-        <!-- ">_" prompt glyph on the chest, signals "code" -->
-        <path
-          d="M 22 50 L 26 54 L 22 58"
-          stroke="#fff8ee"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          fill="none"
-          opacity="0.9"
-        />
-        <rect x="30" y="56.5" width="10" height="2.2" rx="1" fill="#fff8ee" opacity="0.9" />
+        <rect x="4" y="3" width="2" height="2" fill="#1a1714" />
+        <rect x="8" y="3" width="2" height="2" fill="#1a1714" />
+        <!-- legs -->
+        <rect x="3" y="9" width="2" height="3" fill="#cc785c" />
+        <rect x="9" y="9" width="2" height="3" fill="#cc785c" />
       </svg>
     </div>
 

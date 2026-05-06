@@ -1,5 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { box, stepHeader, statusLine, dim, cyan, red, indent } from '../tui/format.js'
 import { ask, secret, confirm, pressEnter, withSpinner } from '../tui/prompt.js'
@@ -228,6 +229,7 @@ async function wizard(): Promise<void> {
         ...(webhookSecret
           ? [`  ${'GITHUB_WEBHOOK_SECRET'.padEnd(28)} ${mask(webhookSecret)}`]
           : [`  ${'GITHUB_WEBHOOK_SECRET'.padEnd(28)} (skipped)`]),
+        `  ${'KALOS_API_KEY'.padEnd(28)} ${process.env.KALOS_API_KEY ? '(from env)' : 'auto-generated, shown after save'}`,
         '',
         dim('And to the kalos database:'),
         '',
@@ -245,14 +247,26 @@ async function wizard(): Promise<void> {
   const pemFilePath = path.join(PROJECT_ROOT, 'kalos.pem')
   fs.writeFileSync(pemFilePath, privateKeyPem.trim() + '\n', { mode: 0o600 })
 
+  // Generate a KALOS_API_KEY if the env doesn't already provide one. The
+  // orchestrator refuses to start without it (open-by-default is a footgun on
+  // a public host), so the wizard guarantees one is in place before exit.
+  const kalosApiKey = process.env.KALOS_API_KEY ?? randomBytes(32).toString('hex')
+
   const envUpdates: Record<string, string> = {
     ANTHROPIC_API_KEY: anthropicKey,
     GITHUB_APP_ID: appId,
     GITHUB_APP_PRIVATE_KEY_PATH: pemFilePath,
     GITHUB_INSTALLATION_ID: installationId,
+    KALOS_API_KEY: kalosApiKey,
   }
   if (webhookSecret) envUpdates.GITHUB_WEBHOOK_SECRET = webhookSecret
   writeEnv(envUpdates)
+
+  // Mirror to process.env so the rest of the boot sequence (apiKeyMiddleware,
+  // boot enforcement, agent dispatch) sees the new values without a restart.
+  for (const [k, v] of Object.entries(envUpdates)) {
+    process.env[k] = v
+  }
 
   // Sanity check the chosen model is in the registry — defensive against a
   // future migration that drops it.
@@ -273,10 +287,15 @@ async function wizard(): Promise<void> {
         [
           dim('API running at  →  ') + cyan('http://localhost:3000'),
           '',
+          dim('Your KALOS_API_KEY (required for every REST + MCP request):'),
+          '  ' + cyan(kalosApiKey),
+          dim("  Saved to .env. Don't share it — anyone with this key can spawn tasks on your behalf."),
+          '',
           dim('Try your first task:'),
           '',
           cyan('curl -X POST http://localhost:3000/tasks \\'),
           cyan('  -H "Content-Type: application/json" \\'),
+          cyan(`  -H "X-Api-Key: ${kalosApiKey}" \\`),
           cyan('  -d \'{"repo":"org/repo","description":"Your task here"}\''),
         ].join('\n'),
       ) +

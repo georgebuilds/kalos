@@ -137,7 +137,7 @@ Kalos exposes its task management as an MCP server via Streamable HTTP (spec `20
 | `DELETE` | `/mcp` | Tear down a session (returns 200; stateless server ignores session ID) |
 
 **Transport**: Stateless Streamable HTTP — each request creates a fresh transport; no `Mcp-Session-Id` required.
-**Auth**: Same `X-Api-Key` header as the REST API. Open when `KALOS_API_KEY` is unset.
+**Auth**: Same `X-Api-Key` header as the REST API. The orchestrator refuses to start without `KALOS_API_KEY` (wizard auto-generates one); the only way to run open is `KALOS_ALLOW_OPEN=true`, intended for localhost dev only.
 
 ### Tools
 
@@ -177,7 +177,8 @@ Pass `status: ["pending", "running"]` to `list_tasks` to get "active jobs".
 | `GITHUB_APP_PRIVATE_KEY_PATH` | orchestrator | Path to PEM file (alternative to above) |
 | `GITHUB_INSTALLATION_ID` | orchestrator | GitHub App installation ID |
 | `GITHUB_WEBHOOK_SECRET` | orchestrator | Webhook HMAC secret |
-| `KALOS_API_KEY` | orchestrator | Bearer token for the Kalos REST API + MCP server |
+| `KALOS_API_KEY` | orchestrator | Bearer token for the Kalos REST API + MCP server. Required — orchestrator refuses to start without it (wizard auto-generates one for new installs) |
+| `KALOS_ALLOW_OPEN` | orchestrator | Opt back into open auth when `KALOS_API_KEY` is unset. Localhost dev only |
 | `KALOS_WORKSPACE_ROOT` | orchestrator | Per-task clone scratch dir (`EXECUTOR=process` only, default `~/.local/share/kalos/workspaces`) |
 | `KALOS_TOOLCHAIN_DIR` | orchestrator | Shared mise data dir (`EXECUTOR=process` only, default `~/.local/share/kalos/mise`) |
 | `KALOS_TOOLCHAIN_VOLUME` | orchestrator | Named Docker volume backing the in-container mise cache (`EXECUTOR=docker` only, default `kalos-mise-cache`) |

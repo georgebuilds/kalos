@@ -18,6 +18,26 @@ if (!isSetupComplete()) {
   await runWizard()
 }
 
+// Secure-by-default: refuse to start without KALOS_API_KEY. The wizard always
+// generates one for first-run setups; this catches deployments that copy an
+// older .env or skip the wizard entirely. Set KALOS_ALLOW_OPEN=true to opt
+// back into open auth (intended for trusted localhost dev only).
+if (!process.env.KALOS_API_KEY && process.env.KALOS_ALLOW_OPEN !== 'true') {
+  console.error(
+    '[orchestrator] KALOS_API_KEY is not set. Refusing to start with open auth.\n' +
+      '  Either set KALOS_API_KEY=<random-hex> in your .env (the wizard generates one for new installs)\n' +
+      '  or set KALOS_ALLOW_OPEN=true to explicitly opt into no-auth (NOT recommended on a public host).',
+  )
+  process.exit(1)
+}
+
+if (process.env.KALOS_ALLOW_OPEN === 'true') {
+  console.warn(
+    '[orchestrator] KALOS_ALLOW_OPEN=true — REST + MCP are unauthenticated. ' +
+      'Anyone who can reach this port can spawn tasks. Localhost dev only.',
+  )
+}
+
 // Warn loudly at startup if the process executor is selected but mise is
 // missing — the agent will fall back to host PATH, which usually means tests
 // that depend on a pinned runtime version (.tool-versions, .nvmrc, go.mod,

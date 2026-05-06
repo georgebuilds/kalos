@@ -64,9 +64,7 @@ ok "kalos.pem found"
 echo ""
 info "Configure environment"
 
-prompt LLM_PROVIDER  "LLM provider (anthropic / openrouter / ollama)" "anthropic"
-prompt LLM_MODEL     "LLM model" "claude-sonnet-4-5"
-prompt_secret LLM_API_KEY "LLM API key"
+prompt_secret ANTHROPIC_API_KEY "Anthropic API key (sk-ant-…)"
 
 echo ""
 prompt GITHUB_APP_ID           "GitHub App ID"
@@ -75,14 +73,20 @@ prompt_secret GITHUB_WEBHOOK_SECRET "GitHub Webhook secret"
 
 echo ""
 prompt MAX_CONCURRENT_TASKS "Max concurrent agent tasks" "2"
-prompt_secret KALOS_API_KEY "Kalos API key (leave blank to disable auth)"
+prompt_secret KALOS_API_KEY "Kalos API key (leave blank to auto-generate)"
+
+# Auto-generate the kalos API key if blank. Open-by-default is a footgun on a
+# public host, so the orchestrator now refuses to start without one (or an
+# explicit KALOS_ALLOW_OPEN=true escape hatch).
+if [[ -z "${KALOS_API_KEY:-}" ]]; then
+  KALOS_API_KEY="$(openssl rand -hex 32)"
+  ok "Generated KALOS_API_KEY (will be printed at the end)"
+fi
 
 cat > "${REPO_ROOT}/.env" <<EOF
 PORT=3000
 
-LLM_PROVIDER=${LLM_PROVIDER}
-LLM_MODEL=${LLM_MODEL}
-LLM_API_KEY=${LLM_API_KEY}
+ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 
 GITHUB_APP_ID=${GITHUB_APP_ID}
 GITHUB_APP_PRIVATE_KEY_PATH=/app/kalos.pem
@@ -97,7 +101,7 @@ CI_FIX_MAX_ATTEMPTS=3
 DOCKER_SOCKET=/var/run/docker.sock
 AGENT_IMAGE=ghcr.io/georgebuilds/kalos-agent:latest
 DATABASE_URL=/app/packages/orchestrator/data/kalos.db
-${KALOS_API_KEY:+KALOS_API_KEY=${KALOS_API_KEY}}
+KALOS_API_KEY=${KALOS_API_KEY}
 EOF
 
 chmod 600 "${REPO_ROOT}/.env"
@@ -118,7 +122,9 @@ echo ""
 echo -e "${GREEN}All done!${NC}"
 echo ""
 echo "  Health:  curl http://localhost:3000/health"
-[[ -n "${KALOS_API_KEY:-}" ]] && \
-echo "  Tasks:   curl -H \"Authorization: Bearer ${KALOS_API_KEY}\" http://localhost:3000/tasks"
+echo "  Tasks:   curl -H \"X-Api-Key: ${KALOS_API_KEY}\" http://localhost:3000/tasks"
 echo "  Logs:    docker compose -f deploy/docker-compose.yml logs -f"
+echo ""
+echo -e "  ${YELLOW}KALOS_API_KEY${NC}   ${KALOS_API_KEY}"
+echo "  Save this key — it's required for every REST + MCP request."
 echo ""
