@@ -487,6 +487,9 @@
         overflow: visible;
         filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.5))
           drop-shadow(0 -2px 16px rgba(212, 162, 76, 0.08));
+        /* Bird sits above the mascot so the slide-out can emerge "from behind". */
+        position: relative;
+        z-index: 2;
       }
       .bird > * {
         transform-box: fill-box;
@@ -496,13 +499,53 @@
       /* The Claude Code mascot — pixel-art critter who stands beside Korbin.
          Sized to ~1/5 of Korbin's height so he reads as "small companion"
          rather than "second mascot". shape-rendering on the SVG keeps the
-         block edges crisp at any size. */
+         block edges crisp at any size.
+
+         Animation: starts invisible and translated left, hidden behind the
+         bird (z-index < bird). After Korbin's assembly animation completes
+         (~1060ms after page load — see the BIRD ASSEMBLY IIFE), the mascot
+         fades in and slides right to its rest position, revealing itself
+         from behind the bird's body. */
       .dude {
-        height: 20%;
+        height: 16%;
         width: auto;
-        aspect-ratio: 14 / 12;
+        /* Width preserved (~14/12 of the previous height); height squashed
+           20% so the critter reads stockier without losing its silhouette
+           width. preserveAspectRatio="none" on the SVG lets it fill the box. */
+        aspect-ratio: 14 / 9.6;
         margin-bottom: 6px;
         filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+        position: relative;
+        z-index: 1;
+        /* Initial frame — keyframe `to` overrides at end of animation. */
+        opacity: 0;
+        transform: translate(-380%, 0);
+        animation: dude-reveal 1350ms 1350ms forwards;
+      }
+      /* -380% ≈ own width + gap + roughly half of Korbin's width — deep enough
+         that no part of the mascot peeks out past Korbin during the assembly.
+         The arc is a single hop: rise + accelerate right, peak at ~45%, then
+         fall back to baseline at the rest position. Per-keyframe timing
+         functions give it the parabolic feel (ease-out on the way up,
+         ease-in on the way down). */
+      @keyframes dude-reveal {
+        0% {
+          opacity: 0;
+          transform: translate(-380%, 0);
+          animation-timing-function: ease-out;
+        }
+        18% {
+          opacity: 1;
+        }
+        45% {
+          opacity: 1;
+          transform: translate(-180%, -55%);
+          animation-timing-function: ease-in;
+        }
+        100% {
+          opacity: 1;
+          transform: translate(0, 0);
+        }
       }
       /* Smoke drifts gently upward */
       .smoke {
@@ -597,6 +640,11 @@
           transform: none !important;
           opacity: 1 !important;
         }
+        .dude {
+          animation: none !important;
+          opacity: 1 !important;
+          transform: none !important;
+        }
       }
     </style>
   </head>
@@ -625,7 +673,7 @@
         <p class="lede">
           give it a task. it clones, codes, and opens the pr.<br />
           <em
-            >self-hosted<span class="pipe">·</span>powered by claude code<span class="pipe">·</span>runs anywhere node does.</em
+            >self-hosted<span class="pipe">·</span>powered by claude code<span class="pipe">·</span>runs anywhere.</em
           >
         </p>
 
@@ -941,6 +989,7 @@
         class="dude"
         viewBox="0 0 14 12"
         xmlns="http://www.w3.org/2000/svg"
+        preserveAspectRatio="none"
         shape-rendering="crispEdges"
         role="img"
         aria-label="Claude Code mascot"
@@ -950,9 +999,9 @@
         <!-- side shoulder bumps -->
         <rect x="1" y="3" width="1" height="3" fill="#cc785c" />
         <rect x="12" y="3" width="1" height="3" fill="#cc785c" />
-        <!-- eyes -->
-        <rect x="4" y="3" width="2" height="2" fill="#1a1714" />
-        <rect x="8" y="3" width="2" height="2" fill="#1a1714" />
+        <!-- eyes — 1×2 (taller than wide) keeps them small without antialiasing -->
+        <rect x="5" y="3" width="1" height="2" fill="#1a1714" />
+        <rect x="8" y="3" width="1" height="2" fill="#1a1714" />
         <!-- legs -->
         <rect x="3" y="9" width="2" height="3" fill="#cc785c" />
         <rect x="9" y="9" width="2" height="3" fill="#cc785c" />
