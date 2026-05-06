@@ -1,8 +1,6 @@
-import { describe, test, expect, mock } from 'bun:test'
+import { describe, test, expect } from 'vitest'
 
-// Other test files mock ../db/index.js. Restore real modules first so this file
-// always exercises the actual SQLite implementation.
-mock.restore()
+// Vitest scopes vi.mock() per-file, so we don't need to restore module mocks here.
 
 // Set DATABASE_URL before the module is imported so it uses an in-memory DB.
 process.env.DATABASE_URL = ':memory:'

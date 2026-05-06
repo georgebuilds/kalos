@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -7,13 +8,9 @@ let _miseCheck: boolean | null = null
 
 export function hasMise(): boolean {
   if (_miseCheck !== null) return _miseCheck
-  try {
-    const result = Bun.spawnSync(['mise', '--version'], { stdout: 'pipe', stderr: 'pipe' })
-    _miseCheck = result.exitCode === 0
-  } catch {
-    // Bun.spawnSync throws ENOENT when the executable isn't on PATH.
-    _miseCheck = false
-  }
+  const result = spawnSync('mise', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  // spawnSync sets `error` (ENOENT etc.) instead of throwing.
+  _miseCheck = !result.error && result.status === 0
   return _miseCheck
 }
 
@@ -112,14 +109,13 @@ export function installToolchain(workspace: string): void {
     return
   }
   console.log(`[runtime] mise install — ${specs.map((s) => `${s.tool}@${s.version}`).join(' ')}`)
-  const result = Bun.spawnSync(['mise', 'install'], {
+  const result = spawnSync('mise', ['install'], {
     cwd: workspace,
-    stdout: 'inherit',
-    stderr: 'inherit',
+    stdio: ['ignore', 'inherit', 'inherit'],
   })
-  if (result.exitCode !== 0) {
+  if (result.status !== 0) {
     console.warn(
-      `[runtime] mise install exited ${result.exitCode} — agent will fall back to whatever is on PATH`,
+      `[runtime] mise install exited ${result.status} — agent will fall back to whatever is on PATH`,
     )
   }
 }

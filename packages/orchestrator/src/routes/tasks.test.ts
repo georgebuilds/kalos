@@ -1,17 +1,20 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test'
+import { describe, test, expect, vi, beforeEach } from 'vitest'
 
-// Mock db before importing the router so the db module is never initialized.
-const mockInsertTask = mock(() => {})
-const mockGetTask = mock((_id: string) => undefined as any)
-const mockGetLogsForTaskSince = mock(() => [] as any[])
-const mockGetRecentTasks = mock(() => [] as any[])
+const { mockInsertTask, mockGetTask, mockGetLogsForTaskSince, mockGetRecentTasks } = vi.hoisted(
+  () => ({
+    mockInsertTask: vi.fn(() => {}),
+    mockGetTask: vi.fn((_id: string) => undefined as any),
+    mockGetLogsForTaskSince: vi.fn(() => [] as any[]),
+    mockGetRecentTasks: vi.fn(() => [] as any[]),
+  }),
+)
 
-mock.module('../db/index.js', () => ({
+vi.mock('../db/index.js', () => ({
   insertTask: mockInsertTask,
   getTask: mockGetTask,
   getLogsForTaskSince: mockGetLogsForTaskSince,
   getRecentTasks: mockGetRecentTasks,
-  // Stubs for all other db exports — keeps bun's global mock registry coherent.
+  // Stubs for the rest of the db exports.
   getTaskByBranch: () => undefined,
   updateTask: () => {},
   getPendingTasks: () => [],

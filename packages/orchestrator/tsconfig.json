@@ -3,14 +3,11 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": ".",
-    "types": ["bun-types"],
+    "types": ["node"],
     "lib": ["ESNext", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "target": "ESNext",
-    "jsx": "react",
-    "jsxFactory": "h",
-    "jsxFragmentFactory": "Fragment"
+    "target": "ESNext"
   },
   "include": ["src/**/*"]
 }

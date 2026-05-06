@@ -1,14 +1,15 @@
-import { describe, test, expect } from 'bun:test'
+import { describe, test, expect } from 'vitest'
 import { hasChanges } from './git.js'
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 
 describe('hasChanges', () => {
   const testDir = '/tmp/kalos-git-test'
 
   function spawnGit(args: string[], cwd: string) {
-    const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
-    if (!result.success) throw new Error(result.stderr.toString())
+    const result = spawnSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+    if (result.status !== 0) throw new Error(result.stderr?.toString() ?? `git ${args.join(' ')} exited with ${result.status}`)
   }
 
   test('returns false on clean repo', () => {

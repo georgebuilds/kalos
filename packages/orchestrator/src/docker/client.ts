@@ -1,3 +1,4 @@
+import { request as httpRequest, type IncomingMessage } from 'node:http'
 import { config } from '../config.js'
 
 export type ContainerCreateOptions = {
@@ -27,22 +28,45 @@ export class DockerError extends Error {
   }
 }
 
-async function dockerFetch(opts: {
+type HttpResult = { status: number; headers: IncomingMessage['headers']; buf: Buffer }
+
+function dockerFetch(opts: {
   method: string
   path: string
   body?: unknown
   socketPath: string
-}): Promise<Response> {
+}): Promise<HttpResult> {
   const bodyStr = opts.body !== undefined ? JSON.stringify(opts.body) : null
   const headers: Record<string, string> = {}
-  if (bodyStr) headers['Content-Type'] = 'application/json'
-  // @ts-ignore — Bun-specific unix socket option; body null is valid BodyInit
-  return fetch(`http://localhost${opts.path}`, {
-    method: opts.method,
-    body: bodyStr,
-    headers,
-    signal: AbortSignal.timeout(config.dockerFetchTimeoutMs),
-    unix: opts.socketPath,
+  if (bodyStr !== null) {
+    headers['Content-Type'] = 'application/json'
+    headers['Content-Length'] = Buffer.byteLength(bodyStr).toString()
+  }
+
+  return new Promise<HttpResult>((resolve, reject) => {
+    const req = httpRequest(
+      {
+        socketPath: opts.socketPath,
+        path: opts.path,
+        method: opts.method,
+        headers,
+        timeout: config.dockerFetchTimeoutMs,
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('end', () => {
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, buf: Buffer.concat(chunks) })
+        })
+        res.on('error', reject)
+      },
+    )
+    req.on('error', reject)
+    req.on('timeout', () => {
+      req.destroy(new Error(`Docker request timed out after ${config.dockerFetchTimeoutMs}ms`))
+    })
+    if (bodyStr !== null) req.write(bodyStr)
+    req.end()
   })
 }
 
@@ -53,8 +77,7 @@ async function rawRequest(opts: {
   socketPath: string
 }): Promise<{ status: number; buf: Buffer }> {
   const res = await dockerFetch(opts)
-  const buf = Buffer.from(await res.arrayBuffer())
-  return { status: res.status, buf }
+  return { status: res.status, buf: res.buf }
 }
 
 async function dockerRequest(opts: {
@@ -64,9 +87,8 @@ async function dockerRequest(opts: {
   socketPath: string
 }): Promise<{ status: number; body: unknown; rawBody: string }> {
   const res = await dockerFetch(opts)
-  const buf = Buffer.from(await res.arrayBuffer())
-  const rawBody = buf.toString('utf8')
-  const contentType = res.headers.get('content-type') ?? ''
+  const rawBody = res.buf.toString('utf8')
+  const contentType = (res.headers['content-type'] as string | undefined) ?? ''
   let body: unknown = rawBody
   if (contentType.includes('application/json')) {
     try {

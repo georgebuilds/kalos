@@ -1,16 +1,15 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test'
+import { describe, test, expect, vi, beforeEach } from 'vitest'
 
 type Step = { toolResults: { toolName: string; result: unknown }[] }
 
-const mockGenerateText = mock(async (_opts: unknown) => ({ steps: [] as Step[] }))
+const { mockGenerateText } = vi.hoisted(() => ({
+  mockGenerateText: vi.fn(async (_opts: unknown) => ({ steps: [] as Step[] })),
+}))
 
-// tool() is used by tools/index.ts (loaded transitively via loop.ts). Include it
-// so bun can satisfy the named import — the real `tool` is a no-op passthrough anyway.
-const mockTool = (t: unknown) => t
-
-mock.module('ai', () => ({
+vi.mock('ai', () => ({
   generateText: mockGenerateText,
-  tool: mockTool,
+  // tool() is used by tools/index.ts (loaded transitively via loop.ts). Pass-through is fine.
+  tool: (t: unknown) => t,
 }))
 
 const { runAgentLoop } = await import('./loop.js')

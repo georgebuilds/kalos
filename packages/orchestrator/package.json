@@ -3,21 +3,22 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/index.ts",
-    "start": "bun src/index.ts",
-    "test": "bun test --parallel",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@kalos/shared": "workspace:*",
+    "@hono/node-server": "^1.13.7",
+    "@kalos/shared": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^4.0.0",
     "@octokit/rest": "^21.1.1",
-    "ai": "^4.3.15",
+    "better-sqlite3": "^11.7.0",
     "hono": "^4.7.10",
-    "ulid": "^2.3.0"
+    "ulid": "^2.3.0",
+    "zod": "^3.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.8.3"
+    "@types/better-sqlite3": "^7.6.12"
   }
 }

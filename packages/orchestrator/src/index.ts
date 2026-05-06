@@ -1,4 +1,6 @@
 import { Hono } from 'hono'
+import { serve } from '@hono/node-server'
+import { spawnSync } from 'node:child_process'
 import { config } from './config.js'
 import { tasksRouter } from './routes/tasks.js'
 import { webhooksRouter } from './routes/webhooks.js'
@@ -44,7 +46,7 @@ app.get('/health', (c) => c.json({ ok: true }))
 
 startWorker()
 
-const server = Bun.serve({
+const server = serve({
   fetch: app.fetch,
   port: config.port,
 })
@@ -52,7 +54,7 @@ console.log(`Kalos running on http://localhost:${config.port}`)
 
 async function shutdown() {
   console.log('[orchestrator] Shutting down…')
-  server.stop(true)
+  server.close()
   await stopWorker()
   process.exit(0)
 }
@@ -61,11 +63,6 @@ process.on('SIGTERM', shutdown)
 process.on('SIGINT', shutdown)
 
 function isMiseAvailable(): boolean {
-  try {
-    const r = Bun.spawnSync(['mise', '--version'], { stdout: 'pipe', stderr: 'pipe' })
-    return r.exitCode === 0
-  } catch {
-    // Bun.spawnSync throws ENOENT when the executable isn't on PATH.
-    return false
-  }
+  const r = spawnSync('mise', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  return !r.error && r.status === 0
 }

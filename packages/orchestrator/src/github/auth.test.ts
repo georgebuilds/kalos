@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeAll } from 'bun:test'
+import { describe, test, expect, beforeAll } from 'vitest'
 import { generateKeyPairSync } from 'node:crypto'
 import { signAppJwt } from './auth.js'
 

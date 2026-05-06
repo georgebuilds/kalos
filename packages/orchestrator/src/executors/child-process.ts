@@ -1,4 +1,9 @@
+import { spawn, type ChildProcessByStdio } from 'node:child_process'
+import type { Readable } from 'node:stream'
+
+type AgentChildProcess = ChildProcessByStdio<null, Readable, Readable>
 import { mkdirSync, rmSync } from 'node:fs'
+import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { ulid } from 'ulid'
 import { getCachedInstallationToken, getGithubConfig } from '../github/auth.js'
@@ -7,7 +12,7 @@ import type { Task } from '../db/index.js'
 import type { Executor, ExecutionResult } from './executor.js'
 
 /**
- * Runs the agent as a child process on the orchestrator host using Bun.spawn.
+ * Runs the agent as a child process on the orchestrator host using node:child_process.spawn.
  *
  * Trade-offs vs DockerExecutor:
  * - No container isolation: the agent runs as the same OS user, with full access to
@@ -53,12 +58,10 @@ export class ChildProcessExecutor implements Executor {
       ...(isCiFix ? { CHECKOUT_EXISTING_BRANCH: '1', FORCE_PUSH: '1' } : {}),
     }
 
-    const proc = Bun.spawn({
-      cmd: ['bun', 'run', 'packages/agent/src/index.ts'],
+    const proc = spawn('npx', ['tsx', 'packages/agent/src/index.ts'], {
       cwd: process.cwd(),
       env,
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdio: ['ignore', 'pipe', 'pipe'],
     })
 
     const id = ulid()
@@ -124,7 +127,7 @@ export class ChildProcessExecutor implements Executor {
 }
 
 class ChildExecution {
-  readonly proc: ReturnType<typeof Bun.spawn>
+  readonly proc: AgentChildProcess
   readonly workspace: string
   readonly allLines: string[] = []
   stdoutText = ''
@@ -138,7 +141,7 @@ class ChildExecution {
     return this._notifier.promise
   }
 
-  constructor(proc: ReturnType<typeof Bun.spawn>, workspace: string) {
+  constructor(proc: AgentChildProcess, workspace: string) {
     this.proc = proc
     this.workspace = workspace
   }
@@ -158,11 +161,11 @@ class ChildExecution {
 
   async start(): Promise<void> {
     const [stdout, stderr] = await Promise.all([
-      readLines(this.proc.stdout as ReadableStream<Uint8Array>, (line) => {
+      readLines(this.proc.stdout, (line) => {
         this.allLines.push(line)
         this.notify()
       }),
-      readLines(this.proc.stderr as ReadableStream<Uint8Array>, (line) => {
+      readLines(this.proc.stderr, (line) => {
         this.allLines.push(line)
         this.notify()
       }),
@@ -171,7 +174,13 @@ class ChildExecution {
     this.stdoutText = stdout
     this.stderrText = stderr
 
-    const code = await this.proc.exited
+    const code = await new Promise<number>((resolve) => {
+      if (this.proc.exitCode !== null) {
+        resolve(this.proc.exitCode)
+        return
+      }
+      this.proc.once('exit', (exitCode) => resolve(exitCode ?? -1))
+    })
     this.done = true
     this.exitCode = code
     this.notify()
@@ -189,31 +198,14 @@ function makeNotifier(): Notifier {
 }
 
 async function readLines(
-  stream: ReadableStream<Uint8Array>,
+  stream: NodeJS.ReadableStream,
   onLine: (line: string) => void,
 ): Promise<string> {
-  const reader = stream.getReader()
-  const decoder = new TextDecoder()
   const fullLines: string[] = []
-  let buf = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-    let idx: number
-    while ((idx = buf.indexOf('\n')) !== -1) {
-      const line = buf.slice(0, idx)
-      buf = buf.slice(idx + 1)
-      fullLines.push(line)
-      onLine(line)
-    }
+  const rl = createInterface({ input: stream, crlfDelay: Infinity })
+  for await (const line of rl) {
+    fullLines.push(line)
+    onLine(line)
   }
-  // Flush remaining (no trailing newline)
-  if (buf.length > 0) {
-    fullLines.push(buf)
-    onLine(buf)
-  }
-
   return fullLines.join('\n')
 }

@@ -1,4 +1,4 @@
-import { Database } from 'bun:sqlite'
+import Database from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { config } from '../config.js'
@@ -9,8 +9,8 @@ if (dbDir !== '.') mkdirSync(dbDir, { recursive: true })
 
 const db = new Database(dbPath)
 
-db.run('PRAGMA journal_mode = WAL')
-db.run('PRAGMA synchronous = NORMAL')
+db.pragma('journal_mode = WAL')
+db.pragma('synchronous = NORMAL')
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS settings (
@@ -64,18 +64,22 @@ CREATE INDEX IF NOT EXISTS idx_pr_reviews_repo ON pr_reviews(repo, pull_number);
 CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ts ON webhook_deliveries(ts);
 `)
 
-try { db.run('ALTER TABLE tasks ADD COLUMN ci_fix_attempts INTEGER NOT NULL DEFAULT 0') } catch {}
-try { db.run('ALTER TABLE tasks ADD COLUMN parent_task_id TEXT') } catch {}
+try { db.exec('ALTER TABLE tasks ADD COLUMN ci_fix_attempts INTEGER NOT NULL DEFAULT 0') } catch {}
+try { db.exec('ALTER TABLE tasks ADD COLUMN parent_task_id TEXT') } catch {}
 
 const LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
+const cleanupStmts = {
+  deleteOldLogs: db.prepare('DELETE FROM task_logs WHERE ts < ?'),
+  deleteOldTasks: db.prepare(
+    'DELETE FROM tasks WHERE completed_at IS NOT NULL AND completed_at < ?',
+  ),
+}
+
 export function cleanupOldData(): void {
   const cutoff = Date.now() - LOG_RETENTION_MS
-  const deletedLogs = db.run('DELETE FROM task_logs WHERE ts < ?', [cutoff]).changes
-  const deletedTasks = db.run(
-    'DELETE FROM tasks WHERE completed_at IS NOT NULL AND completed_at < ?',
-    [cutoff],
-  ).changes
+  const deletedLogs = cleanupStmts.deleteOldLogs.run(cutoff).changes
+  const deletedTasks = cleanupStmts.deleteOldTasks.run(cutoff).changes
   if (deletedLogs > 0 || deletedTasks > 0) {
     console.log(
       `[db] pruned ${deletedLogs} log rows and ${deletedTasks} completed tasks older than 30 days`,
@@ -190,15 +194,15 @@ export function insertTask(task: {
 }): void {
   const now = Date.now()
   stmts.insertTask.run({
-    $id: task.id,
-    $repo: task.repo,
-    $base_branch: task.baseBranch,
-    $description: task.description,
-    $branch: task.branch ?? null,
-    $ci_fix_attempts: task.ciFixAttempts ?? 0,
-    $parent_task_id: task.parentTaskId ?? null,
-    $created_at: now,
-    $updated_at: now,
+    id: task.id,
+    repo: task.repo,
+    base_branch: task.baseBranch,
+    description: task.description,
+    branch: task.branch ?? null,
+    ci_fix_attempts: task.ciFixAttempts ?? 0,
+    parent_task_id: task.parentTaskId ?? null,
+    created_at: now,
+    updated_at: now,
   })
 }
 
@@ -214,17 +218,14 @@ export function getTask(id: string): Task | undefined {
 
 export function updateTask(id: string, updates: Partial<Omit<Task, 'id' | 'createdAt'>>): void {
   const merged = { ...updates, updatedAt: Date.now() }
-  const rawFields: Record<string, unknown> = {}
+  const params: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(merged)) {
-    rawFields[toSnakeCase(k)] = v
+    params[toSnakeCase(k)] = v
   }
-  const setClauses = Object.keys(rawFields)
+  const setClauses = Object.keys(params)
     .map((k) => `${k} = $${k}`)
     .join(', ')
-  const params = Object.fromEntries([
-    ...Object.entries(rawFields).map(([k, v]) => [`$${k}`, v]),
-    ['$id', id],
-  ])
+  params.id = id
   // Fresh prepare per call because the column set varies. Cache key would be
   // Object.keys(updates).sort().join(',') if this becomes a hotspot.
   db.prepare(`UPDATE tasks SET ${setClauses} WHERE id = $id`).run(params)
@@ -239,7 +240,7 @@ export function getRunningTasks(): Task[] {
 }
 
 export function insertLog(taskId: string, line: string): void {
-  stmts.insertLog.run({ $task_id: taskId, $line: line, $ts: Date.now() })
+  stmts.insertLog.run({ task_id: taskId, line, ts: Date.now() })
 }
 
 export function getLogsForTask(taskId: string): TaskLog[] {
@@ -261,7 +262,7 @@ export function appendLogs(taskId: string, rawLogs: string): void {
   const now = Date.now()
   const insertMany = db.transaction(() => {
     for (const line of lines) {
-      stmts.insertLog.run({ $task_id: taskId, $line: line, $ts: now })
+      stmts.insertLog.run({ task_id: taskId, line, ts: now })
     }
   })
   insertMany()
@@ -280,7 +281,7 @@ export function getSetting(key: string): string | null {
 }
 
 export function setSetting(key: string, value: string): void {
-  settingStmts.set.run({ $key: key, $value: value })
+  settingStmts.set.run({ key, value })
 }
 
 export function isSetupComplete(): boolean {

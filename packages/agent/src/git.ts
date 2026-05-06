@@ -1,22 +1,26 @@
+import { spawnSync } from 'node:child_process'
+
 function git(args: string[], workDir: string): string {
-  const result = Bun.spawnSync(['git', ...args], {
+  const result = spawnSync('git', args, {
     cwd: workDir,
-    stdout: 'pipe',
-    stderr: 'pipe',
+    stdio: ['ignore', 'pipe', 'pipe'],
   })
-  if (!result.success) {
-    throw new Error(result.stderr.toString())
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.toString() ?? `git ${args.join(' ')} exited with ${result.status}`)
   }
   return result.stdout.toString()
 }
 
 // Pass auth via header rather than URL so the token is never persisted in .git/config
 function gitWithAuth(token: string, args: string[], workDir?: string): string {
-  const result = Bun.spawnSync(
-    ['git', '-c', `http.extraheader=AUTHORIZATION: bearer ${token}`, ...args],
-    { ...(workDir ? { cwd: workDir } : {}), stdout: 'pipe', stderr: 'pipe' },
+  const result = spawnSync(
+    'git',
+    ['-c', `http.extraheader=AUTHORIZATION: bearer ${token}`, ...args],
+    { ...(workDir ? { cwd: workDir } : {}), stdio: ['ignore', 'pipe', 'pipe'] },
   )
-  if (!result.success) throw new Error(result.stderr.toString())
+  if (result.status !== 0) {
+    throw new Error(result.stderr?.toString() ?? `git ${args.join(' ')} exited with ${result.status}`)
+  }
   return result.stdout.toString()
 }
 
@@ -38,8 +42,8 @@ export function createBranch(branch: string, from: string, workDir: string, chec
 
 export function commitAll(message: string, workDir: string): void {
   git(['add', '-A'], workDir)
-  const check = Bun.spawnSync(['git', 'diff', '--cached', '--quiet'], { cwd: workDir })
-  if (check.exitCode === 0) return
+  const check = spawnSync('git', ['diff', '--cached', '--quiet'], { cwd: workDir })
+  if (check.status === 0) return
   git(['commit', '-m', message], workDir)
 }
 

@@ -1,10 +1,12 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test'
+import { describe, test, expect, vi, beforeEach } from 'vitest'
 
-const mockPullsCreate = mock(async (_opts: unknown) => ({
-  data: { html_url: 'https://github.com/owner/repo/pull/42' },
+const { mockPullsCreate } = vi.hoisted(() => ({
+  mockPullsCreate: vi.fn(async (_opts: unknown) => ({
+    data: { html_url: 'https://github.com/owner/repo/pull/42' },
+  })),
 }))
 
-mock.module('@octokit/rest', () => ({
+vi.mock('@octokit/rest', () => ({
   Octokit: class {
     pulls = { create: mockPullsCreate }
   },

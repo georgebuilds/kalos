@@ -1,20 +1,20 @@
-import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test'
+import { describe, test, expect, vi, beforeEach } from 'vitest'
 
-// Mock config before importing ci-fix so it captures the mock
-mock.module('../config.js', () => ({
+vi.mock('../config.js', () => ({
   config: { ciFixMaxAttempts: 3 },
 }))
 
-const mockGetTaskByBranch = mock((_branch: string) => undefined as any)
-const mockInsertTask = mock((_task: any) => {})
-const mockUpdateTask = mock((_id: string, _updates: any) => {})
+const { mockGetTaskByBranch, mockInsertTask, mockUpdateTask } = vi.hoisted(() => ({
+  mockGetTaskByBranch: vi.fn((_branch: string) => undefined as any),
+  mockInsertTask: vi.fn((_task: any) => {}),
+  mockUpdateTask: vi.fn((_id: string, _updates: any) => {}),
+}))
 
-mock.module('../db/index.js', () => ({
+vi.mock('../db/index.js', () => ({
   getTaskByBranch: mockGetTaskByBranch,
   insertTask: mockInsertTask,
   updateTask: mockUpdateTask,
-  // Stubs for all other db exports — keeps bun's global mock registry coherent
-  // so subsequent mock.module calls in other test files can override safely.
+  // Stubs for the rest of the db exports so partial mocks don't blow up other paths.
   getTask: () => undefined,
   getPendingTasks: () => [],
   getRunningTasks: () => [],
@@ -65,10 +65,6 @@ beforeEach(() => {
   mockGetTaskByBranch.mockClear()
   mockInsertTask.mockClear()
   mockUpdateTask.mockClear()
-})
-
-afterAll(() => {
-  mock.restore()
 })
 
 describe('queueCiFixIfEligible', () => {

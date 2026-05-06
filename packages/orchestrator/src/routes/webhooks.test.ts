@@ -1,18 +1,20 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test'
+import { describe, test, expect, vi, beforeEach } from 'vitest'
 import { createHmac } from 'node:crypto'
 
-const mockReviewPullRequest = mock(async (_payload: unknown) => {})
-const mockQueueCiFixIfEligible = mock(async (_opts: unknown) => {})
+const { mockReviewPullRequest, mockQueueCiFixIfEligible } = vi.hoisted(() => ({
+  mockReviewPullRequest: vi.fn(async (_payload: unknown) => {}),
+  mockQueueCiFixIfEligible: vi.fn(async (_opts: unknown) => {}),
+}))
 
-mock.module('../github/review.js', () => ({
+vi.mock('../github/review.js', () => ({
   reviewPullRequest: mockReviewPullRequest,
 }))
 
-mock.module('../github/ci-fix.js', () => ({
+vi.mock('../github/ci-fix.js', () => ({
   queueCiFixIfEligible: mockQueueCiFixIfEligible,
 }))
 
-mock.module('../db/index.js', () => ({
+vi.mock('../db/index.js', () => ({
   insertPrReview: () => {},
   tryRecordWebhookDelivery: () => true,
 }))

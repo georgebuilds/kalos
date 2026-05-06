@@ -8,7 +8,10 @@ import {
   realpathSync,
   lstatSync,
   unlinkSync,
+  readFileSync,
+  writeFileSync,
 } from 'node:fs'
+import { spawnSync } from 'node:child_process'
 import { dirname, join, sep } from 'node:path'
 import { commitAll, hasChanges } from '../git.js'
 import { commandArgs } from '../runtime.js'
@@ -71,9 +74,9 @@ export const read_file = tool({
   parameters: z.object({ path: z.string() }),
   execute: async ({ path }) => {
     try {
-      const file = Bun.file(resolveRealPath(path))
-      if (!(await file.exists())) return 'file not found'
-      return truncate(await file.text(), path)
+      const real = resolveRealPath(path)
+      if (!existsSync(real)) return 'file not found'
+      return truncate(readFileSync(real, 'utf-8'), path)
     } catch (err) {
       return `error: ${(err as Error).message}`
     }
@@ -98,7 +101,7 @@ export const write_file = tool({
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
     }
-    await Bun.write(abs, content)
+    writeFileSync(abs, content)
     return `written: ${path}`
   },
 })
@@ -151,15 +154,15 @@ export const run_command = tool({
   execute: async ({ command }) => {
     const safeEnv = { ...process.env }
     for (const key of SECRET_ENV_VARS) delete safeEnv[key]
-    const result = Bun.spawnSync(commandArgs(command), {
+    const [argv0, ...argv] = commandArgs(command)
+    const result = spawnSync(argv0!, argv, {
       cwd: workspace(),
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdio: ['ignore', 'pipe', 'pipe'],
       timeout: RUN_COMMAND_TIMEOUT_MS,
       env: safeEnv,
     })
-    if (!result.success) {
-      return truncate(result.stderr.toString() || `exit code ${result.exitCode}`, 'stderr')
+    if (result.status !== 0) {
+      return truncate(result.stderr?.toString() || `exit code ${result.status}`, 'stderr')
     }
     return truncate(result.stdout.toString(), 'stdout')
   },

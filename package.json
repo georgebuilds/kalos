@@ -2,23 +2,26 @@
   "name": "kalos",
   "version": "0.1.0",
   "private": true,
-  "packageManager": "bun",
+  "packageManager": "npm@10.8.2",
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "dev:orchestrator": "bun --cwd packages/orchestrator run dev",
-    "dev:agent": "bun --cwd packages/agent run dev",
-    "typecheck": "bun --cwd packages/shared run typecheck && bun --cwd packages/orchestrator run typecheck && bun --cwd packages/agent run typecheck",
+    "dev:orchestrator": "npm --workspace @kalos/orchestrator run dev",
+    "dev:agent": "npm --workspace @kalos/agent run dev",
+    "typecheck": "npm --workspace @kalos/shared run typecheck && npm --workspace @kalos/orchestrator run typecheck && npm --workspace @kalos/agent run typecheck",
     "format": "prettier --write \"packages/*/src/**/*.ts\"",
     "format:check": "prettier --check \"packages/*/src/**/*.ts\"",
-    "test": "cd packages/orchestrator && bun test --parallel && cd ../agent && bun test --parallel"
+    "test": "vitest run"
   },
   "engines": {
-    "bun": ">=1.2.0 <2"
+    "node": ">=22"
   },
   "devDependencies": {
-    "bun-types": "^1.2",
-    "prettier": "^3.0.0"
+    "@types/node": "^22.10.0",
+    "prettier": "^3.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.8"
   }
 }
