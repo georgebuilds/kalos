@@ -21,6 +21,12 @@ function requireBool(name: string, defaultVal: boolean): boolean {
   throw new Error(`${name} must be '0', '1', 'false', or 'true', got '${raw}'`)
 }
 
+// Static fields are captured at module load — they don't change at runtime.
+// Wizard-mutable fields (API keys, GitHub App vars, webhook secret) are exposed
+// as getters so reads always hit the live process.env. The first-run wizard
+// writes these values into process.env after this module has already loaded;
+// without lazy reads, every dispatch / review / dashboard call after a fresh
+// install would see undefined until the next orchestrator restart.
 export const config = Object.freeze({
   executor: process.env['EXECUTOR'] ?? 'process',
   databaseUrl: process.env.DATABASE_URL ?? 'kalos.db',
@@ -43,15 +49,14 @@ export const config = Object.freeze({
   // for new (lang, version) pairs. Pre-seeded versions baked into the agent
   // image are copied in by Docker on the volume's first mount.
   toolchainVolume: process.env.KALOS_TOOLCHAIN_VOLUME ?? 'kalos-mise-cache',
-  kalosApiKey: process.env.KALOS_API_KEY,
   trustProxy: requireBool('KALOS_TRUST_PROXY', false),
-  githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET,
+  // ── Wizard-mutable. Lazy reads. ──────────────────────────────────────────
+  get kalosApiKey() { return process.env.KALOS_API_KEY },
+  get githubWebhookSecret() { return process.env.GITHUB_WEBHOOK_SECRET },
   // Anthropic-only — Kalos drives Claude Code, which only speaks Anthropic.
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  // GitHub App vars: validated at call time by getGithubConfig() because the
-  // setup wizard may configure them after process startup via the DB.
-  githubAppId: process.env.GITHUB_APP_ID,
-  githubAppPrivateKeyPath: process.env.GITHUB_APP_PRIVATE_KEY_PATH,
-  githubAppPrivateKey: process.env.GITHUB_APP_PRIVATE_KEY,
-  githubInstallationId: process.env.GITHUB_INSTALLATION_ID,
+  get anthropicApiKey() { return process.env.ANTHROPIC_API_KEY },
+  get githubAppId() { return process.env.GITHUB_APP_ID },
+  get githubAppPrivateKeyPath() { return process.env.GITHUB_APP_PRIVATE_KEY_PATH },
+  get githubAppPrivateKey() { return process.env.GITHUB_APP_PRIVATE_KEY },
+  get githubInstallationId() { return process.env.GITHUB_INSTALLATION_ID },
 })
