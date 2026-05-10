@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { type Task, getSetting, getRecentTasks, getDefaultModelId } from '../db/index.js'
 import { getModel, FALLBACK_MODEL_ID } from '@kalos/shared/models'
+import { safeEqual } from '../auth.js'
 import { config } from '../config.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -81,11 +82,18 @@ const CSP = [
   "frame-ancestors 'none'",
 ].join('; ')
 
+// Dashboard auth. We accept ?key= as a fallback because EventSource and
+// direct browser navigation can't easily set custom headers; the trade-off
+// is that the key ends up in browser history / reverse-proxy access logs.
+// `Referrer-Policy: no-referrer` (set on the page response) blocks the
+// Referer leak channel. Use safeEqual so the comparison is constant-time —
+// critical when the key is exposed via URL, since that opens a smaller
+// timing-attack window than a server-side header check would.
 uiRouter.use('*', async (c, next) => {
   const apiKey = config.kalosApiKey
   if (apiKey) {
-    const provided = c.req.header('X-Api-Key') ?? c.req.query('key')
-    if (provided !== apiKey) return c.text('Unauthorized', 401)
+    const provided = c.req.header('X-Api-Key') ?? c.req.query('key') ?? ''
+    if (!safeEqual(provided, apiKey)) return c.text('Unauthorized', 401)
   }
   await next()
 })
