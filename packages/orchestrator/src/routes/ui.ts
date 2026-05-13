@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { randomBytes } from 'node:crypto'
 import * as path from 'node:path'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -12,7 +13,11 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const bundleJs = readFileSync(path.join(here, '..', 'ui', 'dashboard.js'), 'utf8')
   .replace(/<\/script/gi, '<\\/script')
 
-const html = `<!doctype html>
+const SESSION_COOKIE = 'kalos_session'
+const SESSION_TTL_SECONDS = 60 * 60 * 12
+
+function renderHtml(nonce: string): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -27,9 +32,21 @@ const html = `<!doctype html>
 </head>
 <body>
 <div id="app"></div>
-<script type="module">${bundleJs}</script>
+<script type="module" nonce="${nonce}">${bundleJs}</script>
 </body>
 </html>`
+}
+
+function parseCookie(header: string | undefined, name: string): string | null {
+  if (!header) return null
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=')
+    if (eq < 0) continue
+    const key = part.slice(0, eq).trim()
+    if (key === name) return decodeURIComponent(part.slice(eq + 1).trim())
+  }
+  return null
+}
 
 function mask(s: string): string {
   return s.length <= 8 ? '••••' : `${s.slice(0, 4)}••••${s.slice(-4)}`
@@ -72,40 +89,65 @@ const VERSION = readVersion()
 
 export const uiRouter = new Hono()
 
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data:",
-  "connect-src 'self'",
-  "frame-ancestors 'none'",
-].join('; ')
+function buildCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ')
+}
 
-// Dashboard auth. We accept ?key= as a fallback because EventSource and
-// direct browser navigation can't easily set custom headers; the trade-off
-// is that the key ends up in browser history / reverse-proxy access logs.
-// `Referrer-Policy: no-referrer` (set on the page response) blocks the
-// Referer leak channel. Use safeEqual so the comparison is constant-time —
-// critical when the key is exposed via URL, since that opens a smaller
-// timing-attack window than a server-side header check would.
-uiRouter.use('*', async (c, next) => {
-  const apiKey = config.kalosApiKey
-  if (apiKey) {
-    const provided = c.req.header('X-Api-Key') ?? c.req.query('key') ?? ''
-    if (!safeEqual(provided, apiKey)) return c.text('Unauthorized', 401)
-  }
-  await next()
-})
+// Dashboard auth. The dashboard runs in a browser, which can't set custom
+// headers on navigation. The old design accepted the API key via ?key= in the
+// URL, which leaked it into proxy logs, browser history, and bookmarks. The
+// new flow accepts ?key= once at the root, sets an HttpOnly cookie, and
+// redirects to a clean URL — every subsequent request authenticates via the
+// cookie, so the raw key never reappears in the URL bar.
+function isAuthorized(c: { req: { header: (n: string) => string | undefined; query: (k: string) => string | undefined } }, apiKey: string): boolean {
+  const header = c.req.header('X-Api-Key')
+  if (header && safeEqual(header, apiKey)) return true
+  const cookie = parseCookie(c.req.header('cookie'), SESSION_COOKIE)
+  if (cookie && safeEqual(cookie, apiKey)) return true
+  return false
+}
 
 uiRouter.get('/', (c) => {
+  const apiKey = config.kalosApiKey
+  if (apiKey) {
+    // One-shot ?key= → cookie + redirect to clean URL. Keeps the key out of
+    // browser history beyond this single hop.
+    const queryKey = c.req.query('key')
+    if (queryKey !== undefined) {
+      if (!safeEqual(queryKey, apiKey)) return c.text('Unauthorized', 401)
+      c.header(
+        'Set-Cookie',
+        `${SESSION_COOKIE}=${encodeURIComponent(queryKey)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_SECONDS}`,
+      )
+      return c.redirect('/', 303)
+    }
+    if (!isAuthorized(c, apiKey)) return c.text('Unauthorized', 401)
+  }
+
+  const nonce = randomBytes(16).toString('base64')
   c.header('Content-Type', 'text/html; charset=utf-8')
-  c.header('Content-Security-Policy', CSP)
+  c.header('Content-Security-Policy', buildCsp(nonce))
   c.header('X-Frame-Options', 'DENY')
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('Referrer-Policy', 'no-referrer')
   c.header('Cache-Control', 'no-store')
-  return c.body(html)
+  return c.body(renderHtml(nonce))
+})
+
+// All non-root UI routes (currently /ui/data) require a header or cookie —
+// ?key= is intentionally rejected here so a stolen URL can't pull data.
+uiRouter.use('/ui/*', async (c, next) => {
+  const apiKey = config.kalosApiKey
+  if (apiKey && !isAuthorized(c, apiKey)) return c.text('Unauthorized', 401)
+  await next()
 })
 
 uiRouter.get('/ui/data', (c) => {

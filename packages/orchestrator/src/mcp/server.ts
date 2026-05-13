@@ -13,6 +13,7 @@ import { cancelTask } from '../queue/worker.js'
 import { getModel } from '@kalos/shared/models'
 
 const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const BRANCH_RE = /^[A-Za-z0-9._/-]+$/
 const TASK_STATUS_VALUES = TASK_STATUSES as readonly TaskStatus[]
 
 function toolError(message: string) {
@@ -31,7 +32,12 @@ mcpServer.registerTool(
         .regex(REPO_RE, 'repo must be in owner/repo format')
         .refine((r) => !r.includes('..'), { message: 'repo must not contain ..' }),
       description: z.string().min(1, 'description is required'),
-      baseBranch: z.string().optional(),
+      baseBranch: z
+        .string()
+        .regex(BRANCH_RE, 'baseBranch contains disallowed characters')
+        .refine((b) => !b.startsWith('-'), { message: "baseBranch must not start with '-'" })
+        .refine((b) => !b.includes('..'), { message: "baseBranch must not contain '..'" })
+        .optional(),
       modelId: z.string().optional(),
     },
   },

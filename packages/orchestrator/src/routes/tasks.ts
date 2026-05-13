@@ -13,6 +13,18 @@ import { getModel } from '@kalos/shared/models'
 import { apiKeyMiddleware } from '../auth.js'
 import { config } from '../config.js'
 
+// Git refnames are restrictive; we narrow further to defeat argument injection
+// when the value flows into `git checkout -b <new> <base>` as a positional arg.
+// Allowed: ASCII letters, digits, dot, underscore, slash, hyphen. Rejected:
+// leading '-' (would be parsed as a git option), '..', and '@{' (reflog spec).
+const BRANCH_RE = /^[A-Za-z0-9._/-]+$/
+
+function validateBranchName(value: string, field: string): void {
+  if (!BRANCH_RE.test(value)) throw new Error(`${field} contains disallowed characters`)
+  if (value.startsWith('-')) throw new Error(`${field} must not start with '-'`)
+  if (value.includes('..')) throw new Error(`${field} must not contain '..'`)
+}
+
 function validateCreateTask(body: unknown): {
   repo: string
   baseBranch: string
@@ -26,6 +38,13 @@ function validateCreateTask(body: unknown): {
     throw new Error('repo must be in owner/repo format')
   if (typeof b.description !== 'string' || !b.description)
     throw new Error('description is required')
+  let baseBranch = 'main'
+  if (b.baseBranch !== undefined) {
+    if (typeof b.baseBranch !== 'string' || !b.baseBranch)
+      throw new Error('baseBranch must be a non-empty string')
+    validateBranchName(b.baseBranch, 'baseBranch')
+    baseBranch = b.baseBranch
+  }
   let modelId: string | null = null
   if (b.modelId !== undefined && b.modelId !== null) {
     if (typeof b.modelId !== 'string' || !b.modelId) throw new Error('modelId must be a non-empty string')
@@ -34,7 +53,7 @@ function validateCreateTask(body: unknown): {
   }
   return {
     repo: b.repo,
-    baseBranch: typeof b.baseBranch === 'string' ? b.baseBranch : 'main',
+    baseBranch,
     description: b.description,
     modelId,
   }

@@ -150,7 +150,14 @@ const camelToSnakeMap: Record<keyof Omit<Task, 'id' | 'createdAt'>, string> = {
 }
 
 function toSnakeCase(key: string): string {
-  return (camelToSnakeMap as Record<string, string>)[key] ?? key
+  const mapped = (camelToSnakeMap as Record<string, string>)[key]
+  // Hard-fail on unmapped keys instead of falling through verbatim. The keys
+  // are spliced into SQL as column names, so a caller passing arbitrary
+  // strings (e.g. `req.body`) would otherwise create a SQL-injection sink.
+  // TypeScript catches this at compile time; the runtime check defends against
+  // any caller that bypasses the type system.
+  if (mapped === undefined) throw new Error(`updateTask: unknown column '${key}'`)
+  return mapped
 }
 
 function rowToTask(row: Record<string, unknown>): Task {
